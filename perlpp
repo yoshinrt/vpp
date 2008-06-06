@@ -1,0 +1,1301 @@
+#! /usr/local/bin/perl
+# $Id$
+# 2 "perlpp.pl"
+# .tab=4
+#----------  perlpp Ver1.25                    ----------
+#----------  Perl Preprocessor                 ----------
+
+# 1 "config.h" 1
+# config.h for perlpp
+# ==================== マクロ定義 ====================
+
+#   ライブラリをスクリプト中に埋め込む
+
+#   各種メッセージを日本語にする
+
+#   スイッチ型オプションの初期値
+
+# 7 "perlpp.pl" 2
+
+# ----- パッケージライブラリのロード
+
+# 1 "error.pl" 1
+# ----------  error.pl  Ver1.11  1998.09.04
+# ----- エラーメッセージ・ヘルプ表示関係
+package error;
+# init         エラーテーブル初期化
+# error        エラーメッセージ出力
+# pause        リターンキー入力待ち
+# pause_on     入力待ちをオンにする
+# pause_off    入力待ちをオフにする
+# beep         ブザーを鳴らす
+# beep_on      ブザーをオンにする
+# beep_off     ブザーをオフにする
+# help         ヘルプメッセージ出力
+#
+# Ver1.01: 1998.04.23 コメントを修正
+# Ver1.10: 1998.05.08 ブザー関係を追加
+# Ver1.11: 1998.09.04 リターンキー入力待ちで他のキーを押されても読み捨てる
+#                     ように修正
+
+# ---------- Local Variables
+
+# 一時停止フラグ(初期値OFF)
+$pause = 0;
+# 一時停止時メッセージ
+$pause_mes = '<PUSH RETURN KEY>';
+# ブザーフラグ(初期値ON)
+$beep = 0;
+
+# ----- エラーメッセージテーブル初期化
+# ・引数：エラー名とメッセージのリスト(任意個)
+sub init {
+    %err_msg = @_;
+}
+
+# ----- エラー出力・強制終了
+# ・エラーメッセージテーブル %err_msg のエントリ $err_name を
+#   STDERR に printf 出力
+# ・このとき、@arg に指定した内容が引数となる
+# ・$mode が 'E' のとき exit ステータス 1 でプログラム終了
+#            'C' のとき 処理を続行
+sub mes {
+    local($err_name, $mode, @arg) = @_;
+
+    printf(STDERR $err_msg{$err_name}."\n", @arg);
+    if ($mode eq 'E'){
+        &pause;
+        exit(1);
+    }
+}
+
+# ----- リターンキー入力待ち
+# ・error'$pause が真なら、error'$pause_mesを表示し、
+#   標準入力から一行読んで捨てる
+sub pause {
+    local($\) = '';
+
+    if ($pause){
+        print STDERR $pause_mes;
+        1 while(getc ne "\n");
+    }
+}
+
+# ----- リターンキー入力待ち有効
+# ・pauseで入力待ちを行うよう設定
+sub pause_on {
+    $pause = 1;
+}
+
+# ----- リターンキー入力待ち無効
+# ・pauseで入力待ちを行わないよう設定
+sub pause_off {
+    $pause = 0;
+}
+
+# ----- ブザーを鳴らす
+# ・error'$beep が真なら、ブザーを鳴らす
+sub beep {
+    local($\) = '';
+
+    (print STDERR "\a")
+        if ($beep);
+}
+
+# ----- ブザー有効
+# ・beepでブザーを鳴らすよう設定
+sub beep_on {
+    $beep = 1;
+}
+
+# ----- ブザー無効
+# ・beepでブザーを鳴らさないよう設定
+sub beep_off {
+    $beep = 0;
+}
+
+# ----- helpメッセージ表示
+# ・helpメッセージを表示し、強制終了する
+sub help {
+    local(*helpmsg) = @_;
+    local($i);
+
+    for ($i=0; $i<=$#helpmsg; $i++){
+        print STDERR $helpmsg[$i], "\n";
+    }
+    &pause;
+    exit(1);
+}
+
+# ----- End of error package
+1;
+# 11 "perlpp.pl" 2
+
+package main;
+
+# ----- 非パッケージライブラリのロード
+
+# 1 "getarg.pl" 1
+# ----------  getarg.pl  Ver1.20  1998.06.12
+#       引数・オプション解析
+#
+#  &getarg(*ARGV, $format, *unknown_option, *illegal_arg_num);
+# ・@argvの内容を$formatにしたがって解析
+#   ARGVの各要素のうち、'-'で始まるものはオプションと認識
+#   オプションの直後の要素は、フォーマットの指定によっては
+#   オプションの値とみなす
+# ・出力:
+#   ・unknown_option：未定義オプションの並び(文字列)
+#   ・illegal_arg_num：余分な引数の個数
+# ・$formatの書式:
+#     format = /Def1/Def2/.../Defn/
+#       区切り記号`/'の前後には、空白や改行が入ってもよい
+#       Def = c:var    c:オプション文字列 var:呼出し側の変数名
+#             var=1とする
+#             Ex: $format=".../h:help/...", -h -> caller'$help = 1
+#           = c:~var    c:オプション文字列 var:呼出し側の変数名
+#             var=0とする (definedで未定義値と区別できる)
+#             Ex: $format=".../nv:~verbose/...", -nv -> caller'$verbose = 0
+#           = c:!var    c:オプション文字列 var:呼出し側の変数名
+#             var=-1とする (varが定義済の場合のfalse指定用)
+#             Ex: $format=".../nv:!verbose/...", -nv -> caller'$verbose = -1
+#           = c:var:   c:オプション文字列 var:呼出し側の変数名
+#             そのオプション直後の引数をvalueとして、var=valueとする
+#             Ex: $format=".../d:dir:/...", -d tmp -> caller'$dir = 'tmp'
+#           = c;var    c:オプション文字 var:呼出し側の変数名
+#             cで始まるオプションがあれば、その残りの部分をvarの値とする
+#             Ex: $format=".../D;macro/...", -DDEBUG -> caller'$macro = 'DEBUG'
+#           = c;t;var  c:オプション文字 t:区切り記号 var:呼出し側の変数名
+#             cで始まるオプションがあれば、varの現在値に、
+#             残りの部分+区切り記号を追加する
+#             ※値が任意の可読文字を含む場合は、区切り記号に\fなどを使えばよい
+#             Ex: $format=".../D;,;macro/...", -DDEBUG -DTEST=2
+#                   -> caller'$macro = 'DEBUG,TEST=2'
+#           = $var     var:呼出し側の変数名
+#                残っている引数の先頭のものを、varの値とする
+#             Ex: $format=".../d:dir/$infile/$outfile/",
+#                 -d tmp test.src test.out
+#                   -> caller'$dir='tmp', caller'$infile='test.src',
+#                      caller'$outfile='test.out'
+#既知のバグ
+#・-f file形式でfileを書かなくてもエラーにならない(値は空になる)
+#
+#Ver1.00 1997.09.10
+#Ver1.10 1997.11.20  :!形式を追加
+#Ver1.11 1998.05.08  コメントを修正
+#Ver1.20 1998.05.08  :~形式を追加
+#
+
+sub getarg{
+    local(*argv, $format, *unknown_option, *illegal_arg_num) = @_;
+    local($_, $opt, $opthead, $optleft);
+
+    $unknown_option  = '';
+    $illegal_arg_num = 0;
+
+    while($_ = shift(@argv)){
+
+        if (/^-(.)(.*)$/){
+            $opthead = $1;
+            $optleft = $2;
+            $opt = $1.$2;
+            if ($format =~ m#/\s*$opt:(\w+)\s*/#){
+                eval('$'.(caller)[0]."'".$1.'=1');
+            }
+            elsif ($format =~ m#/\s*$opt:~(\w+)\s*/#){
+                eval('$'.(caller)[0]."'".$1.'=0');
+            }
+            elsif ($format =~ m#/\s*$opt:!(\w+)\s*/#){
+                eval('$'.(caller)[0]."'".$1.'=-1');
+            }
+            elsif ($format =~ m#/\s*$opthead;(\w+)\s*/#){
+                eval('$'.(caller)[0]."'".$1.'=\''.$optleft.'\'');
+            }
+            elsif ($format =~ m#/\s*$opthead;(.);(\w+)\s*/#){
+                eval('$'.(caller)[0]."'".$2.'.=\''.$optleft.$1.'\'');
+            }
+            elsif ($format =~ m#/\s*$opt:(\w+):\s*/#){
+                eval('$'.(caller)[0]."'".$1.'=\''.shift(@argv).'\'');
+            }
+            else {
+                $unknown_option .= ($unknown_option eq '') ? $_ : ', '.$_;
+                            # 未定義オプション
+            }
+        }
+        else {
+            if ($format =~ m#/\s*\$(\w+)\s*#g){ # 一度値設定した変数は飛ばす
+                 eval('$'.(caller)[0]."'".$1.'='.'$_');
+            }
+            else {
+                $illegal_arg_num++;
+            }
+        }
+    }
+}
+1;
+
+# 21 "perlpp.pl" 2
+
+# 1 "cmdpath.pl" 1
+# ----------  cmdpath.pl  Ver1.11  1998.05.08
+# -----  起動スクリプトの存在するパスやスクリプト名を返す
+# -----  ※環境によっては正常動作しない可能性あり
+# Ver1.10: 1997.11.19 cmd_nameを追加
+# Ver1.11: 1998.05.08 コメントを修正
+
+# -----  起動スクリプトの存在するパスを返す
+sub cmd_path {
+    local($path);
+
+    if ($0 =~ /^(.*[\/\\])[^\/\\]+$/){
+        $path = $1;
+    }
+    return $path;
+}
+
+# -----  起動スクリプトのスクリプト名を返す
+# ・拡張子は(あれば)取り除く
+sub cmd_name {
+    $0 =~ /([^\/\.\\]+)(\.[^\/\.\\]*)*$/;
+    return $1;
+}
+1;
+# 22 "perlpp.pl" 2
+
+# 1 "complext.pl" 1
+# ----------  complext.pl  Ver1.10  1998.07.17
+# -----  拡張子補完
+# -----  文字列 $filename が'.'を含まないなら、'.'+$ext を付加したものを返す
+# -----                          含むなら、そのままの値を返す
+# -----    Ex. complete_ext('readme','txt') -> 'readme.txt'が返る
+# 
+#Ver1.00 1997.09.10
+#Ver1.10 1998.07.17  パスに'..'や'.'を含むと拡張子ありと誤認するバグを修正
+
+sub complete_ext{
+    local($filename, $ext) = @_;
+   
+    ($filename .= '.'.$ext)
+        unless($filename =~ /\.[^\/\\]+$/);
+    return $filename;
+}
+1;
+# 23 "perlpp.pl" 2
+
+# 1 "readcfg.pl" 1
+# ----------  readcfg.pl  Ver1.02  1998.06.12
+#       設定ファイル読込
+# 要 cmdpath.pl, complext.pl
+#
+#・呼出形式:&read_config($filename, $verboseF)
+#  ・filename:  設定ファイル名
+#               パスを含む場合、そのファイルを読み込む
+#               パスを含まない場合、次の順に探し、ファイルがあれば読み込む
+#                 1. カレントディレクトリ
+#                 2. コマンド(スクリプト)の存在するディレクトリ
+#               拡張子がない場合、ファイル名に'.cfg'を付加
+#  ・verboseF:  非0の場合、STDERRに処理経過を出力
+#
+#・返り値:($err, *result)
+#  ・err:以下の値の和
+#          1 設定ファイルが見つからない
+#          2 設定ファイル中に書式に合わない行が存在
+#          4 beginがendで閉じていない
+#  ・%result:読んだKEYとVALUEのリスト(連想配列)
+#
+#・設定ファイルの書式
+#  ・#で始まる行はコメントとして読み飛ばす
+#  ・空行は読み飛ばす
+#  ・形式1:
+#    <KEY> <1個以上の空白文字> <VALUE>
+#    という行は、KEYとVALUEの組を%resultに追加する
+#    この形式では、VALUEの前後の空白は削除される
+#    (前後に空白を含む値を記述できるようにするには、`"'などで囲ませておいて
+#    VALUEを処理するルーチンで引用符をはずす、あるいは次のbegin...end形式を
+#    用いる)
+#  ・形式2:
+#    begin <1個以上の空白文字> <KEY>
+#    ...
+#    end
+#    という形は、begin行の次行からend行の前行までをVALUEとする
+#    この形式では空白などもそのまま値に含まれるが、endで始まる行を
+#    記述できるようにするには、形式1と同様、引用符などを用いる必要がある
+#  ・形式2で値行が複数行に渡る場合や、形式1,2を問わず同一のKEYが2箇所以上で
+#    指定された場合には、各行の内容は"\n"をはさんで連結される
+#
+# Ver1.00 1997.11.24
+# Ver1.01 1998.05.08  コメントを修正
+# Ver1.02 1998.06.12  初期化回りを修正
+
+sub read_config {
+    local($filename, $verboseF) = @_;
+    local(*result, $err, *CFG_FH);
+
+    $err = 0;
+    %result = ();
+    $filename = &cmd_name
+        if ($filename eq '');   # ファイル名指定がなければコマンド名を使用
+    $filename = &complete_ext($filename, 'cfg'); # 拡張子がなければ補完
+
+    (print STDERR "設定ファイル $filename:")
+        if ($verboseF);
+    if (open(CFG_FH, $filename)){
+        (print STDERR " 読み込み中...")
+            if ($verboseF);
+        $err = &read_config_sub(*CFG_FH, $verboseF, *result);
+        close(CFG_FH);
+        (print STDERR "読み込み終了\n")
+            if ($verboseF);
+    }
+    elsif($filename =~ /[^\/\\]/){ # パス指定がなければ
+        (print STDERR "見つかりません\n")
+            if ($verboseF);
+        $filename = &cmd_path.$filename;
+        (print STDERR "設定ファイル $filename:")
+            if ($verboseF);
+        if (open(CFG_FH, $filename)){
+            (print STDERR " 読み込み中...")
+                if ($verboseF);
+            $err = &read_config_sub(*CFG_FH, $verboseF, *result);
+            close(CFG_FH);
+            (print STDERR "読み込み終了\n")
+                if ($verboseF);
+        }
+        else {
+            (print STDERR "見つかりません\n")
+                if ($verboseF);
+            $err += 1;
+        }
+    }
+    else {
+        (print STDERR "見つかりません\n")
+            if ($verboseF);
+        $err += 1;
+    }
+    return ($err, %result);
+}
+
+sub read_config_sub {
+    local(*CFG_FH, $verboseF, *result) = @_;
+    local($err, $key, $val)=(0, '', '');
+
+    while (<CFG_FH>){
+        if (/^\#/ || /^\n$/){   # 空行とコメントはスキップ
+        }
+        elsif (/^begin\s+([A-z0-9]+)$/){
+            $key = $1;
+        }
+        elsif (/^end\s*$/){
+            $key = '';
+        }
+        elsif ($key ne ''){
+            if (defined $result{$key}){
+                $result{$key} .= "\n"
+                    unless ($result{$key} =~ /(^|\n)$/); # 複数の値は\nで区切る
+                $result{$key} .= $_;
+            }
+            else {
+                $result{$key} = $_;
+            }
+        }
+        elsif (($key, $val) = /^([A-z0-9]+)\s+([^\s].*)$/){
+            $val =~ s/\s*$//;
+            if (defined $result{$key}){
+                $result{$key} .= "\n"
+                    unless ($result{$key} =~ /(^|\n)$/); # 複数の値は\nで区切る
+                $result{$key} .= $val;
+            }
+            else {
+                $result{$key} = $val;
+            }
+            $key = '';
+        }
+        else {
+            $err += 2;
+        }
+    }
+    $err += 4
+        if ($key ne '');
+    return $err;
+}
+
+1;
+# 24 "perlpp.pl" 2
+
+# 1 "macro.h" 1
+# macro.h for perlpp
+# ==================== マクロ定義 ====================
+
+#  ---------- 定数
+
+# 読んだ分だけ、空行を出力
+# ReadLineを使っていれば、それで追加読みした分も含む
+
+# 32 "perlpp.pl" 2
+
+# 1 "version.h" 1
+
+# 33 "perlpp.pl" 2
+
+# 1 "helpj.pl" 1
+# helpj.pl for perlpp
+# ==================== ヘルプメッセージ(日本語版) ====================
+
+@help_msg = (
+             '書式: perlpp [オプション...] 入力ファイル名 [出力ファイル名]',
+             '  オプション:-h      : ヘルプメッセージ表示',
+             '             -v,-nv  : 経過表示をする/しない',
+             '             -m,-nm  : マクロ表示をする/しない',
+             '             -q,-nq  : 引用部をマクロ展開の対象外にする/しない',
+             '             -s,-ns  : #の後に空白が来ても制御文とする/しない',
+             '             -l -nl  : 出力に行番号情報を含める/含めない',
+             '             -p -np  : 出力を圧縮する/しない',
+             '             -c file : 設定ファイルの指定',
+             '             -nc     : 設定ファイルを読み込まない',
+             '             -Ipath  : includeパスの指定',
+             '             -D      : define macro',
+             '                   形式1 : -Dマクロ名 / 形式2 : -Dマクロ名=値',
+             );
+# 36 "perlpp.pl" 2
+
+# 1 "errmesj.pl" 1
+# errmesj.pl for perlpp
+# ==================== エラーメッセージ ====================
+
+%err_msg = (
+UNDEF_OPT,
+"Error: オプション `%s' は未定義です",
+TOO_MANY_ARG,
+"Error: 引数が多すぎます",
+
+CANNOT_INPUT_SRC,
+"Error: 入力ファイル `%s' が見つかりません",
+CANNOT_OUTPUT,
+"Error: ファイル `%s' を出力できません",
+CANNOT_INPUT_CFG,
+"Warning: 設定ファイル `%s' が見つかりません",
+UNDEF_CFG_COM,
+"Warning: 未定義コマンド %s が 設定ファイル `%s' 中にあります",
+ILLEGAL_CFG,
+"Error: 設定ファイル `%s' の記述に誤りがあります",
+
+NO_SUPPORT_COM,
+"Warning: 構文#%s (`%s' %d 行) はサポートされていません",
+ILLEGAL_DEFINE,
+"Error: マクロ定義文 #define が間違っています (`%s' %d 行)",
+REDEFINE,
+"Warning: マクロ `%s' が二重定義されています (`%s' %d 行)",
+ILLEGAL_ELSE,
+"Error: #ifdef/#if がないのに #else があります (`%s' %d 行)",
+ILLEGAL_ENDIF,
+"Error: #ifdef/#if がないのに #endif があります (`%s' %d 行)",
+NONCLOSED_BLOCK,
+"Warning: #endif で閉じられていない #ifdef/#if ブロックが %d 個あります",
+CANNOT_INCLUDE,
+"Error: include ファイル `%s' を読み込めません (`%s' %d 行)",
+TOO_MANY_MACRO_ARGS,
+"Warning: %d 引数マクロ `%s' の実引数が %d 個あります (`%s' %d 行)",
+TOO_FEW_MACRO_ARGS,
+"Warning: %d 引数マクロ `%s' の実引数が %d 個しかありません (`%s' %d 行)",
+ARGS_NOT_COMPLETED,
+"Error: %d 引数マクロ `%s' の第 %d 引数の途中で、入力ファイルが終っています",
+            );
+
+# 37 "perlpp.pl" 2
+
+# ---------- Grobal Variables
+
+# ----- オプション
+$Gopt_help = 0;             # ヘルプ表示
+# Gopt_verbose                    冗長モード
+# Gopt_print_macro                定義されたマクロを出力
+# Gopt_skip_quoto                 引用部はマクロ置換しない
+# Gopt_spaced_command             #の後に空白文字が来ればコメントとみなす
+# Gopt_output_lineno              出力に行番号情報を含める
+# Gopt_pack                       圧縮モード
+$Gopt_cfgfile = '';             # 設定ファイル名
+$Gopt_noread_config = 0;        # 設定ファイルを読まないフラグ
+$Gopt_macro = '';               # マクロ定義
+$Gopt_umacro = '';              # 定義抹消するマクロ
+$Gopt_incpath = '';             # includeパス
+
+# ---------- Main Routine
+
+# src_filename            入力ファイル名(パス含む)
+# out_filename            出力ファイル名(パス含む)
+# %err_msg                エラーメッセージ
+# arg_format              引数フォーマット文字列
+# unknown_option          未定義オプション列
+# illegal_arg_num         過剰引数個数
+# @help_msg               ヘルプメッセージ
+%Gmacro_val = ();               # マクロ値(インデックスはマクロ名)
+%Gmacro_argnum = ();            # マクロの引数個数(インデックスはマクロ名)
+@Gincpath = ();                 # includeパスのリスト
+
+# 引用部開始パターン
+@Gquoto_begin = (
+                 '[A-Za-z0-9_$\\\\]','\'',
+                 '\\\\','"',
+                 );
+# 引用部終了パターン
+@Gquoto_end = (
+               '(^|[^\\\\])(\\\\\\\\)*\\\\','\'',
+               '(^|[^\\\\])(\\\\\\\\)*\\\\','"',
+               );
+
+$Ginclude_nest = 0;             # #includeのネスト(トップレベルの#!対応用)
+$Gblock_nest = 0;               # ブロックのネストレベル
+@Gblock_pass = (1); # 各ネストレベルのif..else..endifの通過モード
+$Gquoto = 0;                # マクロ非展開部中なら1
+$Gmpart = '';                   # 引用部分割時の残り部分格納
+$Gbpart = '';
+
+&init(*err_msg, *arg_format);
+&getarg(*ARGV, $arg_format, *unknown_option, *illegal_arg_num);
+(print STDERR '----- Perlpp Ver1.25 (2000.07.13) -----',"\n")
+    if ((defined $Gopt_verbose) ? $Gopt_verbose : 0);
+# 引数・オプション処理
+&check_arg($unknown_option, $illegal_arg_num, *help_msg,
+           *src_filename, *out_filename);
+&config;
+&init_quoto;
+if ($Gopt_verbose){
+    print STDERR "Input File  : ",
+                 (($src_filename ne '-') ? $src_filename : 'STDIN'), "\n";
+    print STDERR "Output File : ",
+                 (($out_filename ne '-') ? $out_filename : 'STDOUT'), "\n";
+}
+open(OUT_FH, ">".$out_filename)
+    || &error'mes(CANNOT_OUTPUT, E, $out_filename);
+&process($src_filename);
+close(OUT_FH);
+    &error'mes(NONCLOSED_BLOCK, C, $Gblock_nest)
+      if ($Gblock_nest > 0);
+&print_macro
+    if ($Gopt_print_macro);
+
+# ---------- Sub Routines ----------
+
+# ----- 初期化
+sub init{
+    local(*err_msg, *arg_format) = @_;
+
+    &error'init(%err_msg);
+    $arg_format = '/h:Gopt_help
+                   /v:Gopt_verbose
+                   /nv:~Gopt_verbose
+                   /m:Gopt_print_macro
+                   /nm:~Gopt_print_macro
+                   /q:Gopt_skip_quoto
+                   /nq:~Gopt_skip_quoto
+                   /s:Gopt_spaced_command
+                   /ns:~Gopt_spaced_command
+                   /p:Gopt_pack
+                   /np:~Gopt_pack
+                   /l:Gopt_output_lineno
+                   /nl:~Gopt_output_lineno
+                   /c:Gopt_cfgfile:
+                   /nc:Gopt_noread_config
+                   /D;'."\f".';Gopt_macro
+                   /U;,;Gopt_umacro
+                   /I;,;Gopt_incpath
+                   /$src_filename
+                   /$out_filename/';
+}
+
+# ----- コマンド引数・オプション処理
+sub check_arg{
+    local ($unknown_option, $illegal_arg_num, *help_msg,
+           *src_filename, *out_filename) = @_;
+
+    if (!$Gopt_help){
+        (&error'mes(UNDEF_OPT, C, $unknown_option),
+         $Gopt_help = 1)
+            if ($unknown_option);
+        (&error'mes(TOO_MANY_ARG, C),
+         $Gopt_help = 1)
+            if ($illegal_arg_num);
+    }
+    if ($Gopt_help){
+        &error'help(*help_msg);
+    }
+    # -DMACRO=VALUEの形式で指定されたのを"MACRO VALUE"の形にしておく
+    $Gopt_macro =~ s/(^|\f)([A-Za-z_][A-Za-z0-9_]*)\s*=/$1$2 /g;
+    $Gopt_macro =~ s/(^|\f)([A-Za-z_][A-Za-z0-9_]*)\s*@/$1$2 /g;
+    $src_filename = '-'
+        unless (defined $src_filename);
+    $out_filename = '-'
+        unless (defined $out_filename);
+}
+
+# ----- 設定
+sub config{
+    local($err, $key, $val, $m, *result);
+
+    unless ($Gopt_noread_config) {
+        ($err, %result) = &read_config($Gopt_cfgfile,
+                                       (defined $Gopt_verbose)
+                                       ? $Gopt_verbose : 0);
+        $Gopt_cfgfile = '<DEFAULT FILE>'
+            if ($Gopt_cfgfile eq '');
+        if ($err == 0){
+            while (($key, $val) = each %result){
+                if ($key eq 'verbose'){
+                    unless (defined $Gopt_verbose){
+                                # コマンドラインオプション優先
+# 最後に指定したものが有効
+                        $Gopt_verbose = ($val =~ /on$/) ? 1 : 0;
+                    }
+                }
+                elsif ($key eq 'print_macro'){
+                    unless (defined $Gopt_print_macro){
+                                # コマンドラインオプション優先
+# 最後に指定したものが有効
+                        $Gopt_print_macro = ($val =~ /on$/) ? 1 : 0;
+                    }
+                }
+                elsif ($key eq 'skip_quoto'){
+                    unless (defined $Gopt_skip_quoto){
+                                # コマンドラインオプション優先
+# 最後に指定したものが有効
+                        $Gopt_skip_quoto = ($val =~ /on$/) ? 1 : 0;
+                    }
+                }
+                elsif ($key eq 'spaced_command'){
+                    unless (defined $Gopt_spaced_command){
+                                # コマンドラインオプション優先
+# 最後に指定したものが有効
+                        $Gopt_spaced_command = ($val =~ /on$/) ? 1 : 0;
+                    }
+                }
+                elsif ($key eq 'output_lineno'){
+                    unless (defined $Gopt_output_lineno){
+                                # コマンドラインオプション優先
+# 最後に指定したものが有効
+                        $Gopt_output_lineno = ($val =~ /on$/) ? 1 : 0;
+                    }
+                }
+                elsif ($key eq 'pack'){
+                    unless (defined $Gopt_pack){
+                                # コマンドラインオプション優先
+# 最後に指定したものが有効
+                        $Gopt_pack = ($val =~ /on$/) ? 1 : 0;
+                    }
+                }
+                elsif ($key eq 'quoto_begin'){
+                    @Gquoto_begin = split(/\n/,$val);
+                }
+                elsif ($key eq 'quoto_end'){
+                    @Gquoto_end = split(/\n/,$val);
+                }
+                elsif ($key eq 'macro'){
+                    while ($val =~ s/(.+)\n//){
+                        $m = $1;
+                        $Gopt_macro .= $m.(($m =~ s/\\\s*$//) ? '' : "\f");
+                                # \による継続行は\を削って連続させる
+                    }
+                }
+                elsif ($key eq 'include'){
+                    $val =~ s/[\x0D\x0A]//g;
+                    $Gopt_incpath .= $val.",";
+                }
+                else {
+                    &error'mes(UNDEF_CFG_COM, C, $key, $Gopt_cfgfile);
+                }
+            }
+        }
+        elsif ($err & 1){
+            &error'mes(CANNOT_INPUT_CFG, C, $Gopt_cfgfile);        
+        }
+        elsif (($err & 2) || ($err & 4)){
+            &error'mes(ILLEGAL_CFG, E, $Gopt_cfgfile);        
+        }
+    }
+
+# 未定義のスイッチオプションを初期化
+    $Gopt_verbose = 0
+        unless (defined $Gopt_verbose);
+    $Gopt_print_macro = 0
+        unless (defined $Gopt_print_macro);
+    $Gopt_skip_quoto = 1
+        unless (defined $Gopt_skip_quoto);
+    $Gopt_spaced_command = 0
+        unless (defined $Gopt_spaced_command);
+    $Gopt_output_lineno = 0
+        unless (defined $Gopt_output_lineno);
+    $Gopt_pack = 0
+        unless (defined $Gopt_pack);
+
+    &print_options
+        if ($Gopt_verbose);
+# マクロ、インクルードパスの処理
+    &decode_dopt;
+    &decode_iopt;
+}
+
+# ----- ソース処理
+sub process{
+    local($src_filename) = @_;
+    local(*SRC_FH, $line, $macro, $include_filename, $include_pathfilename,
+          $., $com_head, $readcnt);
+
+    open(SRC_FH, $src_filename)
+        || &error'mes(CANNOT_INPUT_SRC, E, $src_filename);
+    $_ = <SRC_FH>;
+    if ($Ginclude_nest == 0 && defined($_)){
+        if (/^#!/){ # 1行目が#!なら、これを出力してから行番号情報出力
+            print OUT_FH $_;
+            (print OUT_FH '# 2 "',
+                          (($src_filename eq '-') ? 'STDIN' : $src_filename),
+                          '"', "\n")
+                if ($Gopt_output_lineno);
+            $_ = <SRC_FH>;
+        }
+        else { 
+            (print OUT_FH '# 1 "',
+                          (($src_filename eq '-') ? 'STDIN' : $src_filename),
+                          '"', "\n")
+                if ($Gopt_output_lineno);
+        }
+    }
+    while (defined($_)){
+        if (s/^\s*(#\s*)//){
+            $com_head = $&;
+            ((print OUT_FH $com_head, $_), next)
+                if (!$Gopt_spaced_command && (length($1) > 1));
+            $readcnt = 1;;
+            # -ns指定時、#の後に空白があればコメント
+# 1 "command.pl" 1
+# command.pl for perlpp
+# ==================== コマンド処理 ====================
+
+if (s/^(if)\s+// || s/^(ifdef)\s+// || s/^(ifndef)\s+//){
+    $line = $_; while ($line =~ s/\\\s*\n//){ $_ = <SRC_FH>; ($line =~ s/\s*$//, s/^\s*//) if ($Gopt_pack); $line .= ' '.$_; $readcnt++; };
+    if (($Gblock_pass[$Gblock_nest] == 1)){ # 現在のブロックを通過中なら
+        if (($1 eq 'if') ? &eval_cond($_)
+            : ($1 eq 'ifdef')
+            ? (s/^([A-Za-z_][A-Za-z0-9_]*)\s*\n//, defined($Gmacro_val{$1}))
+            : (/^([A-Za-z_][A-Za-z0-9_]*)\s*\n/, ! defined($Gmacro_val{$1})))
+                                # 何故かs///にしないとperl4でマッチしない
+        {
+            $Gblock_pass[++$Gblock_nest] = 1;
+        }
+        else {
+            $Gblock_pass[++$Gblock_nest] = 3;
+        }
+    }
+    else { # 現在のブロックがスキップされているなら
+        $Gblock_pass[++$Gblock_nest] = 2;
+        # 最初から通過済とする
+    }
+    #print OUT_FH "\n" x $readcnt;
+}
+elsif (s/^elif\s+//){
+    $line = $_; while ($line =~ s/\\\s*\n//){ $_ = <SRC_FH>; ($line =~ s/\s*$//, s/^\s*//) if ($Gopt_pack); $line .= ' '.$_; $readcnt++; };
+    if (($Gblock_pass[$Gblock_nest] == 3) && &eval_cond($_)){ # ブロック未通過で条件成立なら
+        ($Gblock_pass[$Gblock_nest] = 1);
+    }
+    elsif (($Gblock_pass[$Gblock_nest] == 1)){ # 直前ブロック通過
+        ($Gblock_pass[$Gblock_nest] = 2);
+    }
+    #print OUT_FH "\n" x $readcnt;
+}
+elsif (s#^else\s*(?://.*|/\*.*\*/)*\s*\n##){
+    (&error'mes(ILLEGAL_ELSE, C, $src_filename, $.), $Gblock_nest = 1)
+        if ($Gblock_nest == 0);
+    if (($Gblock_pass[$Gblock_nest] == 1)){
+        # 直前ブロック通過
+        ($Gblock_pass[$Gblock_nest] = 2);
+    }
+    elsif (($Gblock_pass[$Gblock_nest] == 3)){
+        # まだブロックを通過していない
+        ($Gblock_pass[$Gblock_nest] = 1);
+    }
+    #print OUT_FH "\n" x $readcnt;
+}
+elsif (s#^endif\s*(?://.*|/\*.*\*/)*\s*\n##){
+    $Gblock_nest--;
+    (&error'mes(ILLEGAL_ENDIF, C, $src_filename, $.), $Gblock_nest = 0)
+        if ($Gblock_nest < 0);
+    #print OUT_FH "\n";
+    #print OUT_FH "\n" x $readcnt;
+}
+elsif (($Gblock_pass[$Gblock_nest] == 1)){         # 条件制御関係以外は、通過ブロックのみ有効
+    if (s/^define\s+//){
+        $line = $_; while ($line =~ s/\\\s*\n//){ $_ = <SRC_FH>; ($line =~ s/\s*$//, s/^\s*//) if ($Gopt_pack); $line .= ' '.$_; $readcnt++; };
+        ($r, $macro) = &define_macro($line);
+        &error'mes(REDEFINE, C, $macro, $src_filename, $.)
+            if ($r == 1);
+        &error'mes(ILLEGAL_DEFINE, C, $src_filename, $.)
+            if ($r == 2);
+        #print OUT_FH "\n" x $readcnt;
+    }
+    elsif (s/^undef\s+//){
+        $line = $_; while ($line =~ s/\\\s*\n//){ $_ = <SRC_FH>; ($line =~ s/\s*$//, s/^\s*//) if ($Gopt_pack); $line .= ' '.$_; $readcnt++; };
+# MACRO
+        if    ($line =~ /^([A-Za-z_][A-Za-z0-9_]*)\s*\n/){
+            delete $Gmacro_val{$1};
+        }
+        #print OUT_FH "\n" x $readcnt;
+    }
+    elsif (s/^include//){
+        #dds {
+        if( /\S+/ && defined( $Gmacro_val{$&} )){
+            $_ = $` . $Gmacro_val{$&} . $';
+        }
+        # } dds
+        if (s/"(.*)"//){
+            $include_filename = $1;
+            print STDERR "Including '$include_filename'...\n"
+                if ($Gopt_verbose);
+            &do_include($include_filename, $include_filename);
+        }
+        elsif (s/<(.*)>//){
+            $include_filename = $1;
+            for ($i = 0 ; $i <= $#Gincpath; $i++){
+                print STDERR "Searcing include file '$Gincpath[$i]/$include_filename'...\n"
+                    if ($Gopt_verbose);
+                if (-f ($Gincpath[$i].'/'.$include_filename)){
+                    $include_pathfilename
+                        = $Gincpath[$i].'/'.$include_filename;
+                    print STDERR "Including '$include_pathfilename'...\n"
+                        if ($Gopt_verbose);
+                    &do_include($include_pathfilename, $include_filename);
+                    last;
+                }
+            }
+            &error'mes(CANNOT_INCLUDE, E, $include_filename, $src_filename, $.)
+                if ($i > $#Gincpath);
+        }
+        #print OUT_FH "\n" x $readcnt;
+    }
+    else {                  # コメント
+        (print OUT_FH $com_head, $_);
+    }
+}
+# 306 "perlpp.pl" 2
+
+        }
+        else {
+            &expand_macro($_)
+                if (($Gblock_pass[$Gblock_nest] == 1));
+        }
+    }
+continue{
+        $_ = <SRC_FH>;
+    }
+    close(SRC_FH);
+}
+
+# ----- 定義マクロ展開
+sub expand_macro {
+	
+	local( $_ ) = @_;
+	my( $RetStr );
+	
+	( $RetStr, $_ ) = &expand_macro_str( $_ );
+    print OUT_FH $RetStr;
+    
+    return( $_ );
+}
+
+sub expand_macro_str{
+    local($_) = @_;
+    local($macro, $val, $arg, $argnum, $argno, $nest,
+          $fpart, $mpart, $bpart, $ret);
+    local( $OutputLine ) = ();	#dds
+
+    $ret = 0;        # デフォルトでは、入力引数だけ処理して終了
+
+    do {
+        if (($Gquoto != 0)){ # 引用部中
+            if (/$Gpat_quoto_end/o){
+                $fpart = $`;
+                $mpart = $&;
+                $bpart = $';
+                if (($Gquoto == $Gid_quoto_end{$mpart}) && 
+                    ($fpart eq '' ||
+                     !(($fpart.$mpart) =~ /($Gpat_quoto_echk)$/o))){
+                    # 対応引用符かつ
+                    # 行頭または先行文字列がチェックパターンを満たすなら
+                    ($Gquoto = 0); # 非展開部終了
+                }
+                #print OUT_FH $fpart,$mpart;
+                $OutputLine .= $fpart . $mpart;
+                $_ = $bpart;
+            }
+            else {
+                #print OUT_FH $_;$_='';
+                $OutputLine .= $_;$_='';
+            }
+        }
+        else { # 引用部中でない
+            if ($Gopt_skip_quoto &&
+                /$Gpat_quoto_begin/o){
+                $fpart = $`;
+                $Gmpart = $&;
+                $Gbpart = $';
+                my( $Tmp, $Ret ) = &expand_macro_str($fpart);
+                $OutputLine .= $Tmp;
+                #if (&expand_macro($fpart) == 1){
+                if( $Ret == 1 ){
+                                # 前半処理で追加読込していれば、後半部も処理済
+                    $_ = '';
+                }
+                else {
+                    if ($fpart eq '' ||
+                        !(($fpart.$Gmpart) =~ /($Gpat_quoto_bchk)$/o)){
+                        ($Gquoto = $Gid_quoto_begin{$Gmpart});
+                        # 行頭または先行文字列がチェックパターンを満たすなら
+                    }
+                    #print OUT_FH $Gmpart;
+                    $OutputLine .= $Gmpart;
+                    $_ = $Gbpart;
+                }
+            }
+            else {
+                while (s/^([^A-Za-z]*)([A-Za-z_][A-Za-z0-9_]*)//){
+                    #print OUT_FH $1;
+                    $OutputLine .= $1;
+                    $macro = $2;
+                    if (defined($val = $Gmacro_val{$macro})){
+                        $argnum = $Gmacro_argnum{$macro};
+                        if ($argnum == 0){ # 引数無マクロ
+                            $_ = $val.$_;
+                        }
+                        elsif (s/\(//){ # 引数有マクロ
+                            $nest = 1;
+                            $argno = 1;
+                            $quoto = '';
+                            $arg = '';
+                            while ($nest > 0){
+                                if ($_ eq "\n"){
+                                    # 引用分割でなく行末に達したら
+                                    #print OUT_FH "\n";
+                                    $OutputLine .= "\n";
+                                    $_ = <SRC_FH>;
+                                    &error'mes(ARGS_NOT_COMPLETED, E,
+                                           $argnum, $macro, $argno-1)
+                                        if eof;
+                                }
+                                elsif ($_ eq ''){ # 引用分割で行末に達したら
+                                    $_ = $Gmpart.$Gbpart;
+                                    $ret = 1;
+                                }
+                                # 行の途中で終わったら次行を追加
+
+                                if ($Gopt_skip_quoto && !($Gquoto != 0) &&
+                                       !/^,/ && # 引数区切り文字なら飛ばす
+                                       s/^($Gpat_quoto_begin)//o){
+                                    # マクロ非展開部開始パターン
+                                    $mpart2 = $&;
+                                    if ($arg eq '' ||
+                                        !(($arg.$mpart2) =~
+                                        /($Gpat_quoto_bchk)$/o)){
+                                        ($Gquoto = $Gid_quoto_begin{$mpart2});
+                                    }
+                                    $arg .= $mpart2;
+                                    redo;
+                                }
+                                elsif (($Gquoto != 0) &&
+                                       s/^($Gpat_quoto_end)//o){
+                                    # マクロ非展開部終了パターン
+                                    $mpart2 = $&;
+                                    if (($Gquoto == $Gid_quoto_end{$mpart2}) &&
+                                        !(($arg.$mpart2) =~
+                                        /($Gpat_quoto_echk)$/o)){
+                                        # 対応引用符なら
+                                        ($Gquoto = 0);
+                                    }
+                                    $arg .= $mpart2;
+                                    redo;
+                                }
+                                s/(.)//;
+                                $c    = $1;
+                                if (($Gquoto != 0)){
+                                    # 非展開部中なら無条件に出力
+                                    $arg .= $c;
+                                }
+                                elsif ($c eq '('){
+                                    $arg .= $c;
+                                    $nest ++;
+                                }
+                                elsif (($c eq ',' || $c eq ')') && $nest == 1){
+                                    $arg =~ s/^ *//; # 実引数前後の空白削除
+                                    $arg =~ s/ *$//;
+                                    $val =~ s/\\$argno/$arg/g;
+                                    $argno ++;
+                                    $arg = '';
+                                    $nest --
+                                        if ($c eq ')');
+                                }
+                                elsif ($c eq ')'){
+                                    $arg .= $c;
+                                    $nest --;
+                                }
+                                else {
+                                    $arg .= $c;
+                                }
+                            }
+                            if ($argno > $argnum+1){
+                                &error'mes(TOO_MANY_MACRO_ARGS, C,
+                                           $argnum, $macro, $argno-1,
+                                           $src_filename, $.);
+                            }
+                            elsif ($argno <= $argnum){
+                                &error'mes(TOO_FEW_MACRO_ARGS, C,
+                                           $argnum, $macro, $argno-1,
+                                           $src_filename, $.);
+                                for (; $argno <= $argnum; $argno++){
+                                    $val =~ s/\\$argno//g; #余分な仮引数を除く
+                                }
+                            }
+                            $_ = $val.$_;
+                        }
+                        else {  # 引数つきマクロの名前が引数なしで出現
+                            #print OUT_FH $macro; # マクロではないとする
+                            $OutputLine .= $macro; # マクロではないとする
+                        }
+                    }
+                    else {
+                        #print OUT_FH $macro;
+                        $OutputLine .= $macro;
+                    }
+                }
+                #print OUT_FH $_;$_='';
+                $OutputLine .= $_;$_='';
+            }
+        }
+    } while ($_ ne '');
+    return ( $OutputLine, $ret );
+}
+
+sub eval_cond_org{
+    local($_) = @_;
+    local ($line, $pred, $token) = ('', '', '');
+
+    while (s/^(\W*)([A-Za-z_][A-Za-z0-9_]*)//){
+        $pred = $1;
+        $token = $2;
+        if ($token eq 'defined'){   # defined演算子
+            $line .= $pred;
+#           直後のトークンをマクロとして解釈
+            s/^\s*([A-Za-z_][A-Za-z0-9_]*)// || s/^\s*\(([A-Za-z_][A-Za-z0-9_]*)\)//; 
+            $line .= (defined $Gmacro_val{$1}) ? 1 : 0;
+        }
+        elsif (defined $Gmacro_val{$token}){ # マクロならその内容で置換
+            $token = $Gmacro_val{$token};
+            #$token =~ s/^'(.*)'$/$1/; # ',"は外して、'でクォート
+            #$token =~ s/^"(.*)"$/$1/; # "で囲むとevalで変数展開されるので×
+            # dds マクロ多重展開
+            #$line .= $pred."'".$token."'";
+            $_ = $pred.$token.$_;
+        }
+        else {                  # ただの文字定数なら
+            if (($pred =~ /'\s*$/) && /^\s*'/) {
+                $line .= $pred.$token;
+            }
+            elsif (($pred =~ /"\s*$/) && s/^\s*"//) {
+                chop($pred);    # $_の先頭の'は上で削除済み
+                $line .= $pred."'".$token."'";
+            }
+            #else { #クォートされていなければクォートする
+            #    $line .= $pred."\'".$token."\'";
+            #}
+        }
+    }
+    $_ = $line.$_;
+
+#    s/==/ eq /;                 # 比較は文字列として比較
+#    s/!=/ ne /;
+    s/\$Eval//g; #dds $Eval 削除
+    return eval;
+}
+
+sub eval_cond{
+    local($_) = @_;
+    local ($line, $pred, $token) = ('', '', '');
+
+    while (s/^(\W*)([A-Za-z_][A-Za-z0-9_]*)//){
+        $pred = $1;
+        $token = $2;
+        if ($token eq 'defined'){   # defined演算子
+            $line .= $pred;
+#           直後のトークンをマクロとして解釈
+            s/^\s*([A-Za-z_][A-Za-z0-9_]*)// || s/^\s*\(([A-Za-z_][A-Za-z0-9_]*)\)//; 
+            $line .= (defined $Gmacro_val{$1}) ? 1 : 0;
+        }
+        else {                  # ただの文字定数なら
+            if (($pred =~ /'\s*$/) && /^\s*'/) {
+                $line .= $pred.$token;
+            }
+            elsif (($pred =~ /"\s*$/) && s/^\s*"//) {
+                chop($pred);    # $_の先頭の'は上で削除済み
+                $line .= $pred."'".$token."'";
+            }
+            else { #クォートされていなければクォートする
+            #    $line .= $pred."\'".$token."\'";
+                $line .= $pred.$token;
+            }
+        }
+    }
+    $_ = $line.$_;
+
+#    s/==/ eq /;                 # 比較は文字列として比較
+#    s/!=/ ne /;
+    $_ = ( &expand_macro_str( $_ ) )[ 0 ];
+    s/\$Eval//g; #dds $Eval 削除
+    return eval;
+}
+
+# ----- #include実行
+sub do_include{
+    local($src, $name) = @_;
+
+    $Ginclude_nest ++;
+    (print OUT_FH '# 1 "',$name,'" 1',"\n")
+        if ($Gopt_output_lineno);
+    &process($src);
+    $Ginclude_nest --;
+    (print OUT_FH '# ',$.,' "',$src_filename,'" 2',"\n")
+        if ($Gopt_output_lineno);
+}
+
+# ----- -Dオプション処理
+sub decode_dopt{
+    local ($r, $macro);
+
+    while ($Gopt_macro =~ s/^([^\f]+)\f//){
+        ($r, $macro) = &define_macro($1);
+        &error'mes(REDEFINE, C, $macro, $src_filename, $.)
+            if ($r == 1);
+        &error'mes(ILLEGAL_DEFINE, C, $src_filename, $.)
+            if ($r == 2);
+    }
+    while ($Gopt_umacro =~ s/^([^,]+),//){
+        delete $Gmacro_val{$1};        
+    }
+}
+
+# ----- マクロ定義
+sub define_macro{
+    local($_) = @_;
+    local($macro, $arg, $args, $argnum);
+
+    if    (/^([A-Za-z_][A-Za-z0-9_]*)\s*\n?$/){
+        if (((defined $Gmacro_val{$1}) && ($Gmacro_val{$1} ne 1))){
+            return (1, $1);
+        }
+        $Gmacro_val{$1} = 1;
+        $Gmacro_argnum{$1} = 0;
+    }
+# MACRO VALUE
+    elsif (/^([A-Za-z_][A-Za-z0-9_]*)\s+(.*[^\s])\s*\n?$/){
+        if (((defined $Gmacro_val{$1}) && ($Gmacro_val{$1} ne $2))){
+            return (1, $1);
+        }
+        $Gmacro_val{$1} = $2;
+        $Gmacro_argnum{$1} = 0;
+    }
+# MACRO(X,Y,..)  VALUE
+    elsif (/^([A-Za-z_][A-Za-z0-9_]*)\(([^\)]*\))\s+(.+)\n?$/){
+        if (((defined $Gmacro_val{$1}) && ($Gmacro_val{$1} ne $3))){
+            return (1, $1);
+        }
+        $Gmacro_val{$1} = $3;
+        $macro = $1;
+        $args = $2;
+        $argnum = 0;
+        while($args =~ s/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*([,\)])//){
+            $arg = $1;
+            $argnum ++;
+            1 while ($Gmacro_val{$macro} =~
+                     s/([^A-Za-z0-9_])$arg([^A-Za-z0-9_])/$1\\$argnum$2/);
+                                # パターンに境界部の重なりが生じるため
+                                # gは使えない
+        }
+        $Gmacro_argnum{$macro} = $argnum;
+    }
+    else {
+        return (2, 0);
+    }
+    return (0, 0);
+}
+
+# ----- -Iオプション処理
+sub decode_iopt{
+    local ($i);
+
+    while ($Gopt_incpath =~ s/^([^,]+),//){
+        push(@Gincpath,$1);
+    }
+    if ($Gopt_verbose && $#Gincpath >= 0){
+        print STDERR "Search path for included file : \n    ";
+        for ($i = 0 ; $i <= $#Gincpath ; $i++){
+            print STDERR $Gincpath[$i],(($i == $#Gincpath) ? "\n" : ', ');
+        }
+    }
+}
+
+# ----- 定義マクロ一覧出力
+sub print_macro{
+    local($macro, $val);
+
+    print STDERR "---------- Defined Macros ----------\n";
+    while (($macro, $val) = each %Gmacro_val){
+        printf(STDERR "MACRO:%s(%d):%s\n",
+               $macro, $Gmacro_argnum{$macro},$val);
+    }
+    print STDERR "------------------------------------\n"
+}
+
+# ----- 非展開部指定パターン作成
+sub init_quoto{
+    local($prev, $quoto, $id);
+
+    $Gpat_quoto_bchk = '';
+    $Gpat_quoto_echk = '';
+    $Gpat_quoto_begin = '';
+    $Gpat_quoto_end = '';
+    $Gid_quoto_begin = ();
+    $Gid_quoto_end = ();
+
+    $id = 1;
+    while(defined($prev = shift(@Gquoto_begin))){
+        $quoto = shift(@Gquoto_begin);
+        $Gpat_quoto_bchk .= '('.$prev.$quoto.')|';
+        $Gpat_quoto_begin .= $quoto.'|';
+        $Gid_quoto_begin{$quoto} = $id++;
+    }
+    # 余分な'|'を取る
+    chop($Gpat_quoto_bchk);
+    chop($Gpat_quoto_begin);
+
+    $id = 1;
+    while(defined($prev = shift(@Gquoto_end))){
+        $quoto = shift(@Gquoto_end);
+        $Gpat_quoto_echk .= '('.$prev.$quoto.')|';
+        $Gpat_quoto_end .= $quoto.'|';
+        $Gid_quoto_end{$quoto} = $id++;
+    }
+    # 余分な'|'を取る
+    chop($Gpat_quoto_echk);
+    chop($Gpat_quoto_end);
+}
+
+sub print_options{
+    print STDERR "---------- Options ----------\n";
+    print STDERR "verbose        : ",
+    (($Gopt_verbose == 1) ? 'on' : 'off'), "\n";
+    print STDERR "print_macro    : ",
+    (($Gopt_print_macro == 1) ? 'on' : 'off'), "\n";
+    print STDERR "skip_quoto     : ",
+    (($Gopt_skip_quoto == 1) ? 'on' : 'off'), "\n";
+    print STDERR "spaced_command : ",
+    (($Gopt_spaced_command == 1) ? 'on' : 'off'), "\n";
+    print STDERR "output_lineno  : ",
+    (($Gopt_output_lineno == 1) ? 'on' : 'off'), "\n";
+    print STDERR "pack           : ",
+    (($Gopt_pack == 1) ? 'on' : 'off'), "\n";
+    print STDERR "-----------------------------\n"
+}
