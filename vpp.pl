@@ -1620,11 +1620,20 @@ sub RepeatOutput{
 	$RepCntEd =~ /($OpenClose)/;
 	( $RepCntSt, $RepCntEd, $Step ) = &Evaluate2( $RepCntEd );
 	
-	$Step = 1 if( $Step == 0 );
-	( $RepCntSt, $RepCntEd ) = ( 0, $RepCntSt ) if( !defined( $RepCntEd ));
+	if( !defined( $RepCntEd )){
+		if( $RepCntSt < 0 ){
+			( $RepCntSt, $RepCntEd ) = ( -$RepCntSt - 1, -1 );
+		}else{
+			( $RepCntSt, $RepCntEd ) = ( 0, $RepCntSt );
+		}
+	}
 	
-	if( $RepCntEd !~ /\d+/ ){
-		&Error( "\$repeat() parameter isn't a number: '$RepCntEd'" );
+	if( !defined( $Step )){
+		$Step = $RepCntSt > $RepCntEd ? -1 : 1;
+	}
+	
+	if( !IsNumber( $RepCntSt ) || !IsNumber( $RepCntEd ) || !IsNumber( $Step )){
+		&Error( "\$repeat() parameter isn't a number: ($RepCntSt,$RepCntEd,$Step)" );
 		$RepCntEd = 0;
 	}
 	
@@ -1645,6 +1654,10 @@ sub RepeatOutput{
 	}
 	
 	$bPrintRTL_Enable = $bPrintEnb;
+}
+
+sub IsNumber {
+	$_[ 0 ] != 0 || $_[ 0 ] =~ /^0/;
 }
 
 ### Exec perl ################################################################
