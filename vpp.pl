@@ -5,8 +5,6 @@
 #		vpp -- verilog preprocessor		Ver.1.00
 #		Copyright(C) by DDS
 #
-#	$Id$
-#
 ##############################################################################
 #
 #	2004.07.12	input 宣言等のタブ不ぞろい等を整形するようにした
@@ -39,7 +37,7 @@
 #	2006.08.21	enum の bit width 定数を hoge_W --> hoge_w に変更
 #	2006.09.04	[X] でバス幅定義省略可能
 #				typeof / sizeof 追加
-#	2006.09.08	バス幅が 0? のとき X にするのをやめた
+#	2006.09.08	バス幅が ? のとき X にするのをやめた
 #	2006.09.14	instance で { hoge1, hoge2 } が wire 接続されている場合，
 #				それぞれをバス幅不明で個々に登録する
 #	2006.10.13	休出直前バージョン - instance で {6{1'b1}} を使用可にした
@@ -50,6 +48,13 @@
 #	2008.03.25	reg\t → reg に修正した箇所がある
 #	2008.04.22	# 2 "hoge" などのファイル名変更以外の #hoge をスルー出力
 #	2008.04.23	$repeat の マイナスステップに対応
+#	2009.09.25	タブ幅指定・タブスペース変換を追加
+#	2010.02.16	port list をまじめに整形
+#	2010.09.16	[`HOGE:0] の宣言を正しく扱えなかったのを修正
+#				[...]hoge のようにスペースがないと変になったのを修正
+#				下位 mod の bit 幅が数値で無いとき，文字列としてそのまま適用する
+#				[X] のサポート無し
+#				module_inc モード追加
 #
 ##############################################################################
 $enum = 1;
@@ -79,13 +84,17 @@ $tab1 = 28;
 $tab2 = 52;
 
 $ErrorCnt = 0;
+$TabWidth = 4;	# タブ幅
+
+$TabWidthType	= 8;	# input / output 等
+$TabWidthBit	= 8;	# [xx:xx]
 
 $OpenClose = qr/\([^()]*(?:(??{$OpenClose})[^()]*)*\)/;
 $Debug	= 0;
 
 $MODMODE_NORMAL		= 0;
-$MODMODE_TEST		= 1;
-$MODMODE_TESTINC	= 2;
+$MODMODE_TEST		= 1 << 0;
+$MODMODE_INC		= 1 << 1;
 
 $bPrintRTL_Enable	= 1;
 
@@ -118,14 +127,24 @@ sub main{
 	# -DMACRO setup
 	$CppMacroDef = '';
 	
-	while( $ARGV[ 0 ] =~ /^-[IDv]/ ){
-		$CppMacroDef .= ' ' . $ARGV[ 0 ];
+	while( 1 ){
+		$_ = $ARGV[ 0 ];
 		
-		$Debug = 1 if( $ARGV[ 0 ] =~ /^-v/ );
+		$CppMacroDef .= " $_" if( /^-[vID]/ );
 		
-		push( @INC, $1 ) if( $ARGV[ 0 ] =~ /^-I(.*)/ );
+		if    ( /^-v/		){ $Debug = 1;
+		}elsif( /^-I(.*)/	){ push( @INC, $1 );
+		}elsif( /^-tab(.*)/	){
+			$ExpandTab = 1;
+			$TabWidth = eval( $1 );
+		}else{
+			last;
+		}
 		shift( @ARGV );
 	}
+	
+	# tab 幅調整
+	$tab0 = $TabWidth * 2;
 	
 	# set up default file name
 	
@@ -169,7 +188,9 @@ sub main{
 		return;
 	}
 	
-	open( fpRTL, "> $VppFile" );
+	$ExpandTab ?
+		open( fpRTL, "| expand -$TabWidth > $VppFile" ) :
+		open( fpRTL, "> $VppFile" );
 	
 	$LineCnt = 0;
 	$bParsing = 1;
@@ -251,6 +272,7 @@ sub MultiLineParser {
 		
 		if    ( $Line =~ /^#/			){ &CppDirective( $Line );
 		}elsif( $Word eq 'module'		){ &StartModule( $Line2 );
+		}elsif( $Word eq 'module_inc'	){ &StartModule( $Line2 ); $iModuleMode = $MODMODE_INC;
 		}elsif( $Word eq 'endmodule'	){ &EndModule( $Line );
 		}elsif( $Word eq 'instance'		){ &DefineInst( $Line2 );
 		}elsif( $Word eq 'enum'			){ &Enumerate( $Line2 );
@@ -264,7 +286,14 @@ sub MultiLineParser {
 		}elsif( $Word eq '$AllInputs'	){ &PrintAllInputs( $Line2, $Line );
 		}elsif( $Word eq '$AutoFix'		){ $bAutoFix = ( $Line2 =~ /\bon\b/ );
 		}elsif( $Word eq '$SetBusSize'	){ &SetBusSize( $Line );
-		}else							 { &PrintRTL( $Line );
+		}elsif(
+			$Word eq '_module' ||
+			$Word eq '_endmodule'
+		){
+			$Line =~ s/\b_((?:end)?module)\b/$1/;
+			&PrintRTL( $Line );
+		}else{
+			&PrintRTL( $Line );
 		}
 	}
 }
@@ -354,16 +383,22 @@ sub StartModule{
 			if( $1 ){
 				#if( $2 eq '' ){
 				if( !defined( $2 )){
-					$_ = "$1\t\t\t$3\n";
+					$_ =	TabSpace( $1, $TabWidthType, $TabWidth ) .
+							TabSpace( '', $TabWidthBit,  $TabWidth ) .
+							$3 . "\n";
 				}else{
-					$_ = "$1\t$2\t$3\n";
+					$_ =	TabSpace( $1, $TabWidthType, $TabWidth ) .
+							TabSpace( $2, $TabWidthBit,  $TabWidth ) .
+							$3 . "\n";
 				}
+			}else{
+				s|^[ \t]+||;
 			}
 			$PortDef .= $_;
 			
 			next if( /^\s*(?:reg|wire|parameter)\b/ );
 			
-			s/^(?:input|output|outreg|inout|ioreg)\s+(?:\[[^\]]+\])?\s+//g;
+			s/^(?:input|output|outreg|inout|ioreg)\s+(?:\[[^\]]+\])?\s*//g;
 			s/^/\t/;
 			s/;/,/;
 			$PortList .= $_;
@@ -381,19 +416,9 @@ sub StartModule{
 	
 	while( $Line = shift( @ModuleIO )){
 		
-		@IOList = split( / /, $Line );
-		$InOut = shift( @IOList );
-		
-		$BitWidth = "";
+		( $InOut, $BitWidth, @IOList )	= split( /\t/, $Line );
 		
 		while( $Port = shift( @IOList )){
-			
-			# bit width が指定された
-			
-			if( $Port =~ /^\d/ ){
-				$BitWidth = $Port;
-				next;
-			}
 			
 			$Attr = ( $InOut eq "input" )	? ( $ATTR_NP | $ATTR_IN )	:
 					( $InOut eq "output" )	? ( $ATTR_NP | $ATTR_OUT )	:
@@ -405,7 +430,7 @@ sub StartModule{
 					( $InOut eq "assign" )	? ( $ATTR_FIX | $ATTR_WEAK_W ):
 											  0;
 			
-			if( $BitWidth eq '0?' ){
+			if( $BitWidth eq '?' ){
 				$Attr |= $ATTR_WEAK_W;
 				#$BitWidth = "X";
 			}
@@ -432,7 +457,7 @@ sub EndModule{
 	
 	&ExpandBus();
 	
-	&PrintRTL( "//" ) if( $iModuleMode == $MODMODE_TESTINC );
+	&PrintRTL( '//' ) if( $iModuleMode & $MODMODE_INC );
 	&PrintRTL( $Line );
 	$bInModule = 0;
 	
@@ -441,7 +466,7 @@ sub EndModule{
 	#&SortPort();
 	
 	$bFirst = 1;
-	&PrintRTL( "//" ) if( $iModuleMode == $MODMODE_TESTINC );
+	&PrintRTL( '//' ) if( $iModuleMode & $MODMODE_INC );
 	&PrintRTL( "module $ModuleName" );
 	
 	if( $iModuleMode == $MODMODE_NORMAL ){
@@ -472,25 +497,25 @@ sub EndModule{
 	for( $i = 0; $i < $WireListCnt; ++$i ){
 		if(( $Type = &QueryWireType( $i, "d" )) ne "" ){
 			
-			if( $iModuleMode != $MODMODE_NORMAL ){
+			if( $iModuleMode & $MODMODE_TEST ){
 				$Type = "reg"  if( $Type eq "input" );
 				$Type = "wire" if( $Type eq "output" || $Type eq "inout" );
+			}elsif( $iModuleMode & $MODMODE_INC ){
+				# 非テストモジュールの include モードでは，とりあえず全て wire にする
+				$Type = 'wire';
 			}
 			
-			&PrintRTL((( $Type eq "reg" ) ? "reg\t" : $Type ) . "\t" );
+			&PrintRTL( TabSpace( $Type, $TabWidthType, $TabWidth ));
 			
 			if( $WireListWidth[ $i ] eq "" ){
 				# bit 指定なし
-				&PrintRTL( "\t" );
-			}elsif( $WireListWidth[ $i ] =~ /(\d+):(\d+)/ ){
-				# 10:2 とか
-				&PrintRTL( "[$WireListWidth[ $i ]]" );
+				&PrintRTL( TabSpace( '', $TabWidthBit, $TabWidth ));
 			}else{
-				# 10:0 とか
-				&PrintRTL( "[$WireListWidth[ $i ]:0]" );
+				# 10:2 とか
+				&PrintRTL( TabSpace( FormatBusWidth( $WireListWidth[ $i ] ), $TabWidthBit, $TabWidth ));
 			}
 			
-			&PrintRTL( "\t$WireListName[ $i ];\n" );
+			&PrintRTL( "$WireListName[ $i ];\n" );
 		}
 	}
 	
@@ -690,23 +715,14 @@ sub DefineInst{
 	
 	while( $Line = shift( @ModuleIO )){
 		
-		@IOList = split( / /, $Line );
-		$InOut = shift( @IOList );
+		( $InOut, $BitWidth, @IOList )	= split( /\t/, $Line );
 		
 		$InOut = "output" if( $InOut eq "outreg" );
 		$InOut = "inout"  if( $InOut eq "ioreg" );
 		
 		next if( $InOut !~ /^(?:input|output|inout)$/ );
-		$BitWidth = "";
 		
 		while( $Port = shift( @IOList )){
-			
-			# bit width が指定された
-			
-			if( $Port =~ /^\d/ ){
-				$BitWidth = $Port;
-				next;
-			}
 			
 			( $Wire, $Attr ) = &ConvPort2Wire( $Port, $BitWidth );
 			
@@ -728,12 +744,13 @@ sub DefineInst{
 					$Attr |= $ATTR_WEAK_W;
 				}else{
 					
-					# BusSize が [BIT_DMEMADR-1:0] などのように不明の場合，0? に変換される．
+					# BusSize が [BIT_DMEMADR-1:0] などのように不明の場合，? に変換される．
 					# そのときは $ATTR_WEAK_W 属性をつける
+					# いまは ? が付くのは typeof() のみ
 					
-					if( $BitWidth eq '0?' ){
+					if( $BitWidth eq '?' ){
 						$Attr |= $ATTR_WEAK_W;
-						$BitWidthWire	= '';
+						$BitWidthWire	= $BitWidth;
 					}else{
 						$BitWidthWire	= $BitWidth;
 					}
@@ -746,7 +763,7 @@ sub DefineInst{
 							 ( $InOut eq "output" )	? $ATTR_FIX		:
 													  $ATTR_BYDIR	;
 					
-					# wire 命を修正
+					# wire 名を修正
 					
 					$WireBus =~ s/\d+'[hdob]\d+//g;
 					$WireBus =~ s/[\s{}]//g;
@@ -760,7 +777,7 @@ sub DefineInst{
 						foreach $WireBus ( @_ ){
 							&RegisterWire(
 								$WireBus,
-								'X',
+								'?',
 								$Attr |= $ATTR_WEAK_W,
 								$ModuleName
 							);
@@ -787,25 +804,25 @@ sub DefineInst{
 			PrintRTL( $bFirst ? "(\n" : ",\n" );
 			$bFirst = 0;
 			
-			$tmp  = "\t" x (( $tab0 + 3 ) / 4 );
+			$tmp  = "\t" x (( $tab0 + $TabWidth - 1 ) / $TabWidth );
 			$Len  = $tab0;
 			
 			$Wire =~ s/\$n//g;		#z $n の削除
 			$tmp .= ".$Port";
 			$Len += length( $Port ) + 1;
-			$tmp .= "\t" x (( $tab1 - $Len + 3 ) / 4 );
+			$tmp .= "\t" x (( $tab1 - $Len + $TabWidth - 1 ) / $TabWidth );
 			$Len  = $tab1;
 			
 			$tmp .= "( $Wire";
 			$Len += length( $Wire ) + 2;
 			
 			if( $bAutoFix && $BitWidthWire ne '' && $Wire =~ /^$CSymbol$/ ){
-				$tmp2 = "[$BitWidthWire]";
+				$tmp2 = FormatBusWidth( $BitWidthWire );
 				$Len += length( $tmp2 );
 				$tmp .= $tmp2;
 			}
 			
-			$tmp .= "\t" x (( $tab2 - $Len + 3 ) / 4 );
+			$tmp .= "\t" x (( $tab2 - $Len + $TabWidth - 1 ) / $TabWidth );
 			$Len  = $tab2;
 			
 			$tmp .= ")";
@@ -869,12 +886,12 @@ sub GetModuleIO{
 	# delete comment
 	
 	s|//\*|// \*|g;
-	s/\/\*.*?\*\///gs;
+	s|/\*.*?\*/||gs;
+	s/#.*//g;
+	s|//.*||g;
 	s/\btask\b.*?\bendtask\b//gs;
 	s/\bfunction\b.*?\bendfunction\b//gs;
-	s/\x23.*//g;
-	s/\/\/.*//g;
-	s/`.*//g;
+	s/^\s*`.*//g;
 	
 	# delete \n
 	
@@ -898,39 +915,61 @@ sub GetModuleIO{
 	s/^\n//g;
 	s/\n$//g;
 	
+	#print( "$ModuleName--------\n$_\n" );
 	return( split( /\n/, $_ ));
 }
 
 sub DeleteExceptPort{
 	local( $_ ) = @_;
 	
-	if( /^(?:input|output|inout|wire|reg|outreg|ioreg)\b/ ){
+	if( /^(input|output|inout|wire|reg|outreg|ioreg)\b/ ){
+		
+		local( $Type ) = $1;
+		local( $Width ) = '';
+		
+		$_ = $';
 		
 		#s/\[0:0\]/ /g;
 		#s/\[(\d+):0\]/ $1 /g;
 		
 		# [10:2] とかの対策・・・ MSB:LSB を返す
-		s/\[\s*(\d+)\s*:\s*(\d+)\s*\]/ $1:$2 /g;
+		if( /\[\s*(\d+)\s*:\s*(\d+)\s*\]/ ){
+			$Width = "$1:$2";
+			$_ = $';
+		}
 		
-		# ↑以外のバス表記のときは，不明バス幅にする (^^;
-		s/\[[^\]]+\]/0?/;
+		# ↑以外のバス表記のときは，[...] をそのまま返す
+		elsif( /(\[[^\]]+\])/ ){
+			$Width = "$1";
+			$_ = $';
+		}
 		
 		# typeof()は，不明バス幅にする (^^;
-		s/typeof\s*\([^\)]+\)/0?/;
+		elsif( /typeof\s*\([^\)]+\)/ ){
+			$Width = '?';
+			$_ = $';
+		}
 		
-		s/[ ;,]+/ /g;
-		
-		# enum されたものを ビット数に変換
-		s/^($CSymbol)\s+($CSymbol)/&ConvertEnum2Width( $1, $2 )/ge;
+		# enum されたものか?
+		elsif( /^\s*($CSymbol)/ && defined( $EnumListWidth{ $1 } )){
+			$Width = $EnumListWidth{ $1 };
+			$_ = $';
+		}
 		
 		# wire hoge = hoge の = 以降を削除
-		s/=[^;,]*//g;
+		s/\s*=.*//g;
+		
+		s/^[\s:,]+//;
+		s/[\s:,]+$//;
+		s/[ ;,]+/\t/g;
+		
+		$_ = "$Type\t$Width\t$_";
 		
 	}elsif( /^assign\b/ ){
 		# assign のワイヤーは，= 直前の識別子を採用
 		s/\s*=.*//g;
 		/\s($CSymbol)$/;
-		$_ = "assign $1";
+		$_ = "assign\t$1";
 	}else{
 		$_ = '';
 	}
@@ -1210,8 +1249,8 @@ sub RegisterWire{
 		
 		# ATTR_WEAK_W が絡む場合の BitWidth を更新する
 		if(
-			( $Attr					& $ATTR_WEAK_W ) == 0 &&
-			( $WireListAttr[ $i ]	& $ATTR_WEAK_W ) != 0
+			!( $Attr				& $ATTR_WEAK_W ) &&
+			( $WireListAttr[ $i ]	& $ATTR_WEAK_W )
 		){
 			# List が Weak で，新しいのが Hard なので代入
 			$WireListWidth[ $i ] = $BitWidth;
@@ -1220,8 +1259,9 @@ sub RegisterWire{
 			$WireListAttr[ $i ] &= ~$ATTR_WEAK_W;
 			
 		}elsif(
-			( $Attr					& $ATTR_WEAK_W ) != 0 &&
-			( $WireListAttr[ $i ]	& $ATTR_WEAK_W ) != 0
+			( $Attr					& $ATTR_WEAK_W ) &&
+			( $WireListAttr[ $i ]	& $ATTR_WEAK_W ) &&
+			$WireListWidth[ $i ] =~ /^\d/ && $BitWidth =~ /^\d/
 		){
 			# List，新しいの ともに Weak なので，大きいほうをとる
 			
@@ -1234,8 +1274,9 @@ sub RegisterWire{
 			$WireListWidth[ $i ] = $BitWidth = "$MSB0:$LSB0";
 			
 		}elsif(
-			( $Attr					& $ATTR_WEAK_W ) == 0 &&
-			( $WireListAttr[ $i ]	& $ATTR_WEAK_W ) == 0
+			!( $Attr				& $ATTR_WEAK_W ) &&
+			!( $WireListAttr[ $i ]	& $ATTR_WEAK_W ) &&
+			$WireListWidth[ $i ] =~ /^\d/ && $BitWidth =~ /^\d/
 		){
 			# 両方 Hard なので，サイズが違っていれば size mismatch 警告
 			
@@ -1370,7 +1411,9 @@ sub OutputWireList{
 		
 		# bus width is weakly defined error
 		&Warning( "Bus size is not fixed ( wire : $WireListName[ $i ] )" )
-			if(( $WireListAttr[ $i ] & ( $ATTR_WEAK_W | $ATTR_DC_WEAK_W )) == $ATTR_WEAK_W );
+			if(( $WireListAttr[ $i ] & (
+				$ATTR_WEAK_W | $ATTR_DC_WEAK_W | $ATTR_NP
+			)) == $ATTR_WEAK_W );
 	}
 	
 	@WireListBuf = sort( @WireListBuf );
@@ -1526,6 +1569,20 @@ sub GetBusWidth {
 sub GetBusWidth2 {
 	local( $MSB, $LSB ) = &GetBusWidth( @_ );
 	return( $MSB + 1 - $LSB );
+}
+
+### Format bus width #########################################################
+
+sub FormatBusWidth {
+	local( $_ ) = @_;
+	
+	if( /^\d+$/ ){
+		return "[$_:0]";
+	}elsif( /^\d/ ){
+		return "[$_]";
+	}else{
+		return $_;
+	}
 }
 
 ### かつての本家 vpp.pl ######################################################
@@ -1784,17 +1841,6 @@ sub Enumerate{
 	}
 }
 
-sub ConvertEnum2Width{
-	
-	local( $type, $name ) = @_;
-	
-	if( !defined( $EnumListWidth{ $name } )){
-		return( "$type $name" );
-	}else{
-		return( "$type $EnumListWidth{ $name }" );
-	}
-}
-
 ### print all inputs #########################################################
 
 sub PrintAllInputs {
@@ -1831,6 +1877,13 @@ sub Require {
 	}else{
 		&Error( "Illegal requre file name" )
 	}
+}
+
+### Tab で指定幅のスペースを空ける ###########################################
+
+sub TabSpace {
+	local( $_, $Width, $TabWidth ) = @_;
+	$_ . "\t" x int(( $Width - length( $_ ) + $TabWidth - 1 ) / $TabWidth );
 }
 
 ### set bus size #############################################################
