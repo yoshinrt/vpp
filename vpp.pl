@@ -55,6 +55,8 @@
 #				下位 mod の bit 幅が数値で無いとき，文字列としてそのまま適用する
 #				[X] のサポート無し
 #				module_inc モード追加
+#	2012.02.16	$MODMODE_TESTINC の定義が抜けていた
+#	2012.02.22	//# が消えないのを修正
 #
 ##############################################################################
 $enum = 1;
@@ -95,6 +97,7 @@ $Debug	= 0;
 $MODMODE_NORMAL		= 0;
 $MODMODE_TEST		= 1 << 0;
 $MODMODE_INC		= 1 << 1;
+$MODMODE_TESTINC	= $MODMODE_TEST | $MODMODE_INC;
 
 $bPrintRTL_Enable	= 1;
 
@@ -1625,7 +1628,7 @@ sub VPreProcessor{
 	&Error( "can't open file \"$Tmp\"" ) if( !open( fpVppIn,  "< $Tmp" ));
 	
 	while( <fpVppIn> ){
-		s|^\s*//#.*||g;
+		s|\s*//#.*||g;
 		
 		if( /^\s*$/ ){
 			++$Blank;
