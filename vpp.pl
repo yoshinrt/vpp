@@ -57,6 +57,7 @@
 #				module_inc モード追加
 #	2012.02.16	$MODMODE_TESTINC の定義が抜けていた
 #	2012.02.22	//# が消えないのを修正
+#	2012.04.11	並列実行できるよう vpp.tmp->vpp.$$.tmp に修正
 #
 ##############################################################################
 $enum = 1;
@@ -1593,7 +1594,7 @@ sub FormatBusWidth {
 sub VPreProcessor{
 	
 	local( $Sce, $Dst, $Opt )	= @_;
-	local( $Tmp )				= "vpp.tmp";
+	local( $Tmp )				= "vpp.$$.tmp";
 	local(
 		$Line,
 		$Blank
