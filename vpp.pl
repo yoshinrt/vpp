@@ -58,6 +58,9 @@
 #	2012.02.16	$MODMODE_TESTINC の定義が抜けていた
 #	2012.02.22	//# が消えないのを修正
 #	2012.04.11	並列実行できるよう vpp.tmp->vpp.$$.tmp に修正
+#	2013.01.16	2次元配列の後ろの [...] に反応しておかしくなってたのを修正
+#	2013.01.17	$repeat のネストに対応
+#	2013.01.18	GetModuleIO() で parameter を wire 扱いにした
 #
 ##############################################################################
 $enum = 1;
@@ -304,8 +307,10 @@ sub MultiLineParser {
 
 ### Start of the module #####################################################
 
+my( %RepeatVarTbl );
+
 sub ExpandRepeatParser {
-	my( $bRepeating ) = @_;
+	my( $bRepeating, $RepCnt ) = @_;
 	local( $_ );
 	
 	while( <fpDef> ){
@@ -326,13 +331,15 @@ sub ExpandRepeatParser {
 }
 
 sub ExpandPrintfFmtSub {
-	local( $_, $Num ) = @_;
-	return( sprintf( $_, $Num ));
+	my( $Fmt, $Num, $Name ) = @_;
+	
+	$Num = $RepeatVarTbl{ $Name } if( defined( $Name ));
+	return( sprintf( "%$Fmt", $Num ));
 }
 
 sub ExpandPrintfFmt {
 	local( $_, $Num ) = @_;
-	s/(%[+\-\d\.#]*[%cCdiouxXeEfgGnpsS])/&ExpandPrintfFmtSub($1,$Num)/ge;
+	s/%(?:\{(.+?)\})?([+\-\d\.#]*[%cCdiouxXeEfgGnpsS])/&ExpandPrintfFmtSub( $2, $Num, $1 )/ge;
 	return( $_ );
 }
 
@@ -926,9 +933,9 @@ sub GetModuleIO{
 sub DeleteExceptPort{
 	local( $_ ) = @_;
 	
-	if( /^(input|output|inout|wire|reg|outreg|ioreg)\b/ ){
+	if( /^(input|output|inout|wire|reg|outreg|ioreg|parameter)\b/ ){
 		
-		local( $Type ) = $1;
+		local( $Type ) = $1 eq 'parameter' ? 'wire' : $1;
 		local( $Width ) = '';
 		
 		$_ = $';
@@ -937,13 +944,13 @@ sub DeleteExceptPort{
 		#s/\[(\d+):0\]/ $1 /g;
 		
 		# [10:2] とかの対策・・・ MSB:LSB を返す
-		if( /\[\s*(\d+)\s*:\s*(\d+)\s*\]/ ){
+		if( /^\s*\[\s*(\d+)\s*:\s*(\d+)\s*\]/ ){
 			$Width = "$1:$2";
 			$_ = $';
 		}
 		
 		# ↑以外のバス表記のときは，[...] をそのまま返す
-		elsif( /(\[[^\]]+\])/ ){
+		elsif( /^\s*(\[[^\]]+\])/ ){
 			$Width = "$1";
 			$_ = $';
 		}
@@ -960,8 +967,8 @@ sub DeleteExceptPort{
 			$_ = $';
 		}
 		
-		# wire hoge = hoge の = 以降を削除
-		s/\s*=.*//g;
+		s/\[.*?\]//g;	# 2次元配列の後ろの方の [...] を削除
+		s/\s*=.*//g;	# wire hoge = hoge の = 以降を削除
 		
 		s/^[\s:,]+//;
 		s/[\s:,]+$//;
@@ -1667,18 +1674,27 @@ sub CppDirective{
 
 ### repeat output ############################################################
 # syntax:
-#   $repeat( REPEAT_NUM )
+#   $repeat( [ name: ] REPEAT_NUM ) or $repeat( [ name: ] start [, stop [, step ]] )
 #      ....
 #   $end
+#	
+#	%d とか %{name}d でそれを置換
 
 sub RepeatOutput{
 	my( $RepCntEd ) = @_;
 	my( $RewindPtr ) = tell( fpDef );
 	my( $bPrintEnb ) = $bPrintRTL_Enable;
+	my( $RepCnt );
+	my( $VarName );
 	
 	my( $RepCntSt, $Step );
 	
-	$RepCntEd =~ /($OpenClose)/;
+	# VarName を識別
+	if( $RepCntEd =~ /\s*\(\s*(\w+)\s*:/ ){
+		$VarName = $1;
+		$RepCntEd = "($'";
+	}
+	
 	( $RepCntSt, $RepCntEd, $Step ) = &Evaluate2( $RepCntEd );
 	
 	if( !defined( $RepCntEd )){
@@ -1710,8 +1726,9 @@ sub RepeatOutput{
 		( $RepCntSt < $RepCntEd ) ? $RepCnt < $RepCntEd : $RepCnt > $RepCntEd;
 		$RepCnt += $Step
 	){
+		$RepeatVarTbl{ $VarName } = $RepCnt if( defined( $VarName ));
 		seek( fpDef, $RewindPtr, SEEK_SET );
-		&ExpandRepeatParser( 1 );
+		&ExpandRepeatParser( 1, $RepCnt );
 	}
 	
 	$bPrintRTL_Enable = $bPrintEnb;
