@@ -1,4 +1,4 @@
-#!/usr/bin/perl -w
+#!/usr/bin/perl
 
 ##############################################################################
 #
@@ -29,15 +29,27 @@ my $ATTR_DC_WEAK_W	= ( $enum <<= 1 );		# Bus Size は弱めの申告警告を抑制
 my $ATTR_WEAK_W		= ( $enum <<= 1 );		# Bus Size は弱めの申告
 my $ATTR_NC			= 0xFFFFFFFF;
 
+$enum = 0;
+my $BLKMODE_NORMAL	= $enum++;	# ブロック外
+my $BLKMODE_REPEAT	= $enum++;	# repeat ブロック
+my $BLKMODE_PERL	= $enum++;	# perl ブロック
+my $BLKMODE_IF		= $enum++;	# if ブロック
+my $BLKMODE_ELSE	= $enum++;	# else ブロック
+
+$enum = 1;
+my $EXPAND_CPP		= $enum;		# CPP マクロ展開
+my $EXPAND_REP		= $enum <<= 1;	# repeat マクロ展開
+my $EXPAND_EVAL		= $enum <<= 1;	# $Eval 展開
+
 my $CSymbol		= '\b[_a-zA-Z]\w*\b';
 #$DefSkelPort	= "[io]?(.*)";
 my $DefSkelPort	= "(.*)";
 my $DefSkelWire	= "\$1";
-my $UnknownBusType	= '\[X[^\]]*\]';
+my $UnknownBusType	= '\[]';
 
-my $tab0 = 8;
-my $tab1 = 28;
-my $tab2 = 52;
+my $tab0 = 4 * 2;
+my $tab1 = 4 * 7;
+my $tab2 = 4 * 13;
 
 my $ErrorCnt = 0;
 my $TabWidth = 4;	# タブ幅
@@ -56,7 +68,6 @@ my $MODMODE_INC		= 1 << 1;
 my $MODMODE_TESTINC	= $MODMODE_TEST | $MODMODE_INC;
 
 my $SEEK_SET = 0;
-my $bPrintRTL_Enable	= 1;
 
 my( $DefFile, $RTLFile, $ListFile, $CppFile, $VppFile );
 my $bInModule;
@@ -66,6 +77,8 @@ my $bPostProcess;
 my $RTLBuf;
 my $ModuleName;
 my $ExpandTab;
+my $BlockNoOutput = 0;
+my $BlockRepeat = 0;
 
 # 定義テーブル関係
 my @WireListName;
@@ -154,12 +167,13 @@ sub main{
 	
 	open( fpRTL, "> $CppFile" );
 	
-	ExpandRepeatParser();
+	ExpandRepeatOutput();
+	undef( %DefineTbl );
 	
 	close( fpRTL );
 	close( fpDef );
 	
-	system( "cp $CppFile stage2" ) if( $Debug );
+	system( "cp $CppFile stage1" ) if( $Debug );
 	
 	# vpp
 	if( !open( fpDef, "< $CppFile" )){
@@ -168,8 +182,8 @@ sub main{
 	}
 	
 	$ExpandTab ?
-		open( fpRTL, "| expand -$TabWidth > $VppFile" ) :
-		open( fpRTL, "> $VppFile" );
+		open( fpRTL, "| expand -$TabWidth > $RTLFile" ) :
+		open( fpRTL, "> $RTLFile" );
 	
 	$bParsing = 1;
 	MultiLineParser( $Line );
@@ -179,66 +193,7 @@ sub main{
 	
 	unlink( $CppFile );
 	
-	if( $bPostProcess ){
-		system( "cp $VppFile stage3" ) if( $Debug );
-		
-		# 遅延バスサイズ定義用 バスサイズ出力
-		open( fpIn, "<$VppFile" );
-		open( fpOut, ">$CppFile" );
-		
-		OutputBusTypeDef( fpOut );
-		while( <fpIn> ){
-			print( fpOut );
-		}
-		
-		close( fpIn );
-		close( fpOut );
-		
-		system( "cp $CppFile stage4" ) if( $Debug );
-		
-		#########
-		
-		
-		## VPreProcessor( $CppFile, $RTLFile, '-nl' . $CppMacroDef );
-		unlink( $VppFile );
-		unlink( $CppFile );
-	}else{
-		rename( $VppFile, $RTLFile );
-	}
-	
-	if( $ErrorCnt ){
-		#unlink( $RTLFile );
-	}
-}
-
-sub OutputBusTypeDef{
-	
-	my( $fp ) = @_;
-	my(
-		$BusType,
-		$BusSize,
-		$i,
-	);
-	
-	for( $i = 0; $i < $WireListCnt; ++$i ){
-		
-		if( $WireListWidth[ $i ] =~ /(\d+):(\d+)/ ){
-			$BusSize = $1 - $2 + 1;
-			$BusType = '[' . $WireListWidth[ $i ] . ']';
-		}else{
-			if(
-				( $BusSize = $WireListWidth[ $i ] ) eq '' ||
-				$BusSize =~ /^X/ ||
-				$BusSize =~ /^0\?/
-			){
-				$BusSize = 1;
-			}
-			$BusType = "[" . ( $BusSize - 1 ) . ":0]";
-		}
-		
-		print( $fp "#define SIZEOF_$WireListName[$i] $BusSize\n" );
-		print( $fp "#define TYPEOF_$WireListName[$i] $BusType\n" );
-	}
+	#unlink( $RTLFile ) if( $ErrorCnt );
 }
 
 ### マルチラインパーザ #######################################################
@@ -248,9 +203,12 @@ sub MultiLineParser {
 	my( $Line, $Word );
 	
 	while( <fpDef> ){
+print( ">$_" );
+		$_ = ExpandMacro( $_, $EXPAND_CPP | $EXPAND_EVAL );
+print( "<$_" );
 		( $Word, $Line ) = GetWord( $_ );
 		
-		if    ( $_ =~ /^#/			){ CppDirectiveLine( $_ );
+		if    ( /^#/					){ CppDirectiveLine( $_ );
 		}elsif( $Word eq 'module'		){ StartModule( $Line );
 		}elsif( $Word eq 'module_inc'	){ StartModule( $Line ); $iModuleMode = $MODMODE_INC;
 		}elsif( $Word eq 'endmodule'	){ EndModule( $_ );
@@ -278,106 +236,27 @@ sub MultiLineParser {
 
 ### Start of the module #####################################################
 
-my( %RepeatVarTbl );
-
-sub ExpandRepeatParser {
-	my( $bOutput, $bRepeating, $RepCnt ) = @_;
-	$bOutput	= 1 if( !defined( $bOutput ));
-	$bRepeating	= 0 if( !defined( $bRepeating ));
-	
+sub ExpandRepeatOutput {
+	my( $BlockMode, $bNoOutput ) = @_;
+	$BlockMode	= 0 if( !defined( $BlockMode ));
+	$bNoOutput	= 0 if( !defined( $bNoOutput ));
 	local( $_ );
-	my $Line;
-	my $i;
+	
+	$BlockNoOutput	<<= 1;
+	$BlockNoOutput	|= $bNoOutput;
+	$BlockRepeat	<<= 1;
+	$BlockRepeat	|= ( $BlockMode == $BLKMODE_REPEAT ? 1 : 0 );
 	
 	while( <fpDef> ){
 		if( /^\s*#/	){
-			# \ で終わっている行を連結
-			while( /\\$/ ){
-				if( !( $Line = <fpDef> )){
-					last;
-				}
-				$_ .= $Line;
-			}
-			
-			# コメント類削除
-			s#[\t ]*/\*.*?\*/[\t ]*# #gs;
-			s#[\t ]*//.*$##gm;
-			
-			# \ 削除
-			s/[\t ]*\\[\x0D\x0A]+[\t ]*/ /g;
-			s/\s+$//g;
-			s/^\s*#\s*//;
-			
-			# $DefineTbl{ $1 }->[ 0 ]:  >=0: 引数  <0: 可変引数  's': 単純マクロ
-			# $DefineTbl{ $1 }->[ 1 ]:  マクロ定義本体
-			
-			if( /^define\s+($CSymbol)$/ ){
-				# 名前だけ定義
-				AddCppMacro( $1 );
-			}elsif( /^define\s+($CSymbol)\s+(.+)/ ){
-				# 名前と値定義
-				AddCppMacro( $1, $2 );
-			}elsif( /^define\s+($CSymbol)($OpenClose)\s+(.+)/ ){
-				# 関数マクロ
-				my( $Name, $ArgList, $Macro ) = ( $1, $2, $3 );
-				
-				# ArgList 整形，分割
-				$ArgList =~ s/^\(\s*//;
-				$ArgList =~ s/\s*\)$//;
-				my( @ArgList ) = split( /\s*,\s*/, $ArgList );
-				
-				# マクロ内の引数を特殊文字に置換
-				my $ArgNum = $#ArgList + 1;
-				
-				for( $i = 0; $i <= $#ArgList; ++$i ){
-					if( $i == $#ArgList && $ArgList[ $i ] eq '...' ){
-						$ArgNum = -$ArgNum;
-						last;
-					}
-					$Macro =~ s/\b$ArgList[ $i ]\b/__\$ARG_${i}\$__/g;
-				}
-				
-				AddCppMacro( $Name, $Macro, $ArgNum );
-			}elsif( /^undef\s+($CSymbol)$/ ){
-				# undef
-				undef( $DefineTbl{ $1 } );
-			}elsif( /^ifdef\b/ ){
-			}elsif( /^ifndef\b/ ){
-			}elsif( /^if\b/ ){
-			}elsif( /^elif\b/ ){
-			}elsif( /^else\b/ ){
-			}elsif( /^endif\b/ ){
-			}elsif( /^repeat\s*($OpenClose)/	){ RepeatOutput( $1 );
-			}elsif( /^endrep\b/					){ return;
-			}elsif( /^perl\s+(.*)/s				){ ExecPerl( $1 );
-			}elsif( /^require\s+(.*)/			){ Require( $1 );
-			}else								 {
-				/(\S+)/;
-				Error( "unknown cpp directive '$1'" );
-			}
-		}else{
-			$_ = ExpandMacro( $_ );
-			
-			$_ = ExpandPrintfFmt( $_, $RepCnt ) if( $bRepeating );
-			PrintRTL( $_ );
+			last if( CppDirective( $_, $BlockMode ));
+		}elsif( !$BlockNoOutput ){
+			PrintRTL( ExpandMacro( $_ ));
 		}
 	}
-}
-
-sub ExpandPrintfFmtSub {
-	my( $Fmt, $Num, $Name ) = @_;
 	
-	$Num = $RepeatVarTbl{ $Name } if( defined( $Name ));
-	return( sprintf( "%$Fmt", $Num ));
-}
-
-sub ExpandPrintfFmt {
-	local $_;
-	my $Num;
-	
-	( $_, $Num ) = @_;
-	s/%(?:\{(.+?)\})?([+\-\d\.#]*[%cCdiouxXeEfgGnpsS])/ExpandPrintfFmtSub( $2, $Num, $1 )/ge;
-	return( $_ );
+	$BlockNoOutput	>>= 1;
+	$BlockRepeat	>>= 1;
 }
 
 ### Start of the module #####################################################
@@ -401,8 +280,8 @@ sub StartModule{
 	undef( @WireListWidthDrv );
 	$WireListCnt	= 0;
 	$iModuleMode	= $MODMODE_NORMAL;
-	$PortList		= ();
-	$PortDef		= ();
+	$PortList		= '';
+	$PortDef		= '';
 	
 	@EnumListWidth	= ();
 	
@@ -635,9 +514,6 @@ sub Evaluate2 {
 sub PrintRTL{
 	local( $_ ) = @_;
 	my( $tmp );
-	return if( !$bPrintRTL_Enable );
-	
-	s/\$Eval($OpenClose)/Evaluate($1)/ge;
 	
 	# (in|out)put  [X] hoge〜 処理
 	if( $bParsing ){
@@ -646,9 +522,6 @@ sub PrintRTL{
 			
 			$bPostProcess = 1;
 		}
-		
-		s/\bsizeof\s*\(\s*($CSymbol)\s*\)/SIZEOF_$1/g;
-		s/\btypeof\s*\(\s*($CSymbol)\s*\)/TYPEOF_$1/g;
 	}
 	
 	# outreg / ioreg 処理
@@ -722,6 +595,8 @@ sub DefineInst{
 	@SkelListUsed = ();
 	$SkelListCnt  = 0;
 	
+	my( $LineNo ) = $.;
+	
 	if( $Line !~ /\s+([\w\d]+)(\s+#\([^\)]+\))?\s+(\S+)\s+"?(\S+)"?\s*([\(;])/ ){
 #	if( $Line !~ /\s*,?\s*([\w\d]+)(\s+#\([^\)]+\))?\s*,?\s*(\S+)\s*,?\s*"?(\S+)"?\s*,?\s*([\(;])/ ){
 		Error( "syntax error" );
@@ -731,6 +606,7 @@ sub DefineInst{
 	# get module name, module inst name, module file
 	
 	my( $ModuleName, $ModuleParam, $ModuleInst, $ModuleFile ) = ( $1, $2, $3, $4 );
+	$ModuleParam = '' if( !defined( $ModuleParam ));
 	
 	if( $ModuleInst eq "*" ){
 		$ModuleInst = $ModuleName;
@@ -880,7 +756,7 @@ sub DefineInst{
 	
 	# SkelList 未使用警告
 	
-	WarnUnusedSkelList( $ModuleInst );
+	WarnUnusedSkelList( $ModuleInst, $LineNo );
 }
 
 ### search module & get IO definition ########################################
@@ -1039,24 +915,25 @@ sub GetWord{
 	
 	s/\/\/.*//g;	# remove comment
 	
-	if( !/^\s*([\w\d\$]+)(.*)/ ){
-		/^\s*(.)(.*)/;
-	}
-	
-	return( $1, $2 );
+	return( $1, $2 ) if( /^\s*([\w\d\$]+)(.*)/ || /^\s*(.)(.*)/ );
+	return ( '', $_ );
 }
 
 ### print error msg ##########################################################
 
 sub Error{
-	local( $_ ) = @_;
-	printf( "$DefFile(%d): $_\n", $. );
+	local $_;
+	my $LineNo;
+	( $_, $LineNo ) = @_;
+	printf( "$DefFile(%d): $_\n", $LineNo || $. );
 	++$ErrorCnt;
 }
 
 sub Warning{
-	local( $_ ) = @_;
-	printf( "$DefFile(%d): Warning: $_\n", $. );
+	local $_;
+	my $LineNo;
+	( $_, $LineNo ) = @_;
+	printf( "$DefFile(%d): Warning: $_\n", $LineNo || $. );
 }
 
 ### define output file name ##################################################
@@ -1129,7 +1006,7 @@ sub ReadSkelList{
 		next if( $Line =~ /^\s*$/ );
 		last if( $Line =~ /^\s*\);/ );
 		
-		$Line =~ /^\s*(\S+)\s*(\S+)?\s*(\S+)?/;
+		$Line =~ /^\s*(\S+)\s*(\S*)\s*(\S*)/;
 		
 		$Port = $1;
 		$Wire = $2;
@@ -1168,12 +1045,14 @@ sub ReadSkelList{
 
 sub WarnUnusedSkelList{
 	
-	local( $_ ) = @_;
+	my( $LineNo );
+	local( $_ );
+	( $_, $LineNo ) = @_;
 	my( $i );
 	
 	for( $i = 0; $i < $SkelListCnt; ++$i ){
 		if( $SkelListUsed[ $i ] != 1 ){
-			Warning( "tmpl isn't used ( $SkelListPort[ $i ] --> $SkelListWire[ $i ] \@ $_ )" );
+			Warning( "unused template ( $SkelListPort[ $i ] --> $SkelListWire[ $i ] \@ $_ )", $LineNo );
 		}
 	}
 }
@@ -1628,10 +1507,9 @@ sub FormatBusWidth {
 #	%d とか %{name}d でそれを置換
 
 sub RepeatOutput{
-	my( $RepCntEd ) = @_;
+	my( $BlockMode, $RepCntEd ) = @_;
 	my( $RewindPtr ) = tell( fpDef );
 	my( $LineCnt ) = $.;
-	my( $bPrintEnb ) = $bPrintRTL_Enable;
 	my( $RepCnt );
 	my( $VarName );
 	
@@ -1664,23 +1542,33 @@ sub RepeatOutput{
 	
 	# リピート数 <= 0 時の対策
 	if( $RepCntSt == $RepCntEd ){
-		$RepCntEd = $RepCntSt + 1;
-		$Step = 1;
-		$bPrintRTL_Enable = 0;
+		ExpandRepeatOutput( $BLKMODE_REPEAT, 1 );
+		return;
 	}
+	
+	my $PrevRepCnt;
+	$PrevRepCnt = $DefineTbl{ '__REP_CNT__' }->[ 1 ] if( defined( $DefineTbl{ '__REP_CNT__' } ));
 	
 	for(
 		$RepCnt = $RepCntSt;
 		( $RepCntSt < $RepCntEd ) ? $RepCnt < $RepCntEd : $RepCnt > $RepCntEd;
 		$RepCnt += $Step
 	){
-		$RepeatVarTbl{ $VarName } = $RepCnt if( defined( $VarName ));
+		AddCppMacro( '__REP_CNT__', $RepCnt, undef, 1 );
+		AddCppMacro( $VarName, $RepCnt, undef, 1 ) if( defined( $VarName ));
+		
 		seek( fpDef, $RewindPtr, $SEEK_SET );
 		$. = $LineCnt;
-		ExpandRepeatParser( 1, 1, $RepCnt );
+		PrintRTL( sprintf( "# %d \"$DefFile\"\n", $. + 1 ));
+		ExpandRepeatOutput( $BLKMODE_REPEAT );
 	}
 	
-	$bPrintRTL_Enable = $bPrintEnb;
+	if( defined( $PrevRepCnt )){
+		AddCppMacro( '__REP_CNT__', $PrevRepCnt, undef, 1 );
+	}else{
+		undef( $DefineTbl{ '__REP_CNT__' } );
+	}
+	undef( $DefineTbl{ $VarName } ) if( defined( $VarName ));
 }
 
 sub IsNumber {
@@ -1740,8 +1628,7 @@ sub Enumerate{
 	);
 	
 	# post preprocess 要求
-	
-	$bPostProcess = 1;
+	#$bPostProcess = 1;
 	
 	# ; まで Buf に溜め込む
 	
@@ -1794,8 +1681,8 @@ sub Enumerate{
 	
 	$i = $BitWidth - 1;
 	if( $TypeName ne "" ){
-		PrintRTL( "#define $TypeName\t[$i:0]\n" );
-		PrintRTL( "#define ${TypeName}_w\t$BitWidth\n" );
+		AddCppMacro( $TypeName, "[$i:0]" );
+		AddCppMacro( "${TypeName}_w", $BitWidth );
 	}
 	
 	# enum type list に登録
@@ -1867,7 +1754,7 @@ sub SetBusSize {
 	
 	if( $Bus =~ /$CSymbol/ ){
 		if(( $i = SearchWire( $Bus )) < 0 ){
-			print( "SetBusWire: unknown signal: $Bus\n" );
+			Error( "SetBusWire: unknown signal: $Bus\n" );
 			$Bus = 1;
 		}else{
 			$Bus = $WireListWidth[ $i ];
@@ -1875,7 +1762,7 @@ sub SetBusSize {
 	}
 	
 	if(( $i = SearchWire( $Name )) < 0 ){
-		print( "SetBusWire: unknown signal: $Name\n" );
+		Error( "SetBusWire: unknown signal: $Name\n" );
 	}else{
 		$WireListWidth[ $i ] = $Bus;
 		$WireListAttr [ $i ] &= ~$ATTR_WEAK_W;
@@ -1891,22 +1778,21 @@ sub CppDirectiveLine{
 	if( $Line =~ /^#\s*(\d+)\s+"(.*)"/ ){
 		$. = $1 - 1;
 		$DefFile = ( $2 eq "-" ) ? $ARGV[ 0 ] : $2;
-	}else{
-		PrintRTL( $Line );
 	}
 }
 
 ### CPP directive 処理 #######################################################
 
 sub AddCppMacro {
-	my( $Name, $Macro, $Args ) = @_;
+	my( $Name, $Macro, $Args, $bNoCheck ) = @_;
 	
 	$Macro	= '1' if( !defined( $Macro ));
 	$Args	= 's' if( !defined( $Args ));
 	
 	if(
+		( !defined( $bNoCheck ) || !$bNoCheck ) &&
 		defined( $DefineTbl{ $Name } ) &&
-		( $DefineTbl{ $Name }->[ 0 ] != $Args || $DefineTbl{ $Name }->[ 1 ] != $Macro )
+		( $DefineTbl{ $Name }->[ 0 ] ne $Args || $DefineTbl{ $Name }->[ 1 ] != $Macro )
 	){
 		Warning( "redefined macro '$Name'" );
 	}
@@ -1915,12 +1801,145 @@ sub AddCppMacro {
 }
 
 sub CppDirective {
+	my( $BlockMode );
+	local $_;
+	( $_, $BlockMode )= @_;
+	
+	my $Line;
+	my $i;
+	my $BlockMode2;
+	
+	# \ で終わっている行を連結
+	while( /\\$/ ){
+		if( !( $Line = <fpDef> )){
+			last;
+		}
+		$_ .= $Line;
+	}
+	
+	PrintRTL( sprintf( "# %d \"$DefFile\"\n", $. + 1 ));
+	
+	# コメント類削除
+	s#[\t ]*/\*.*?\*/[\t ]*# #gs;
+	s#[\t ]*//.*$##gm;
+	
+	# \ 削除
+	s/[\t ]*\\[\x0D\x0A]+[\t ]*/ /g;
+	s/\s+$//g;
+	s/^\s*#\s*//;
+	
+	$_ = ExpandMacro( $_, $EXPAND_REP );
+	
+	# $DefineTbl{ $1 }->[ 0 ]:  >=0: 引数  <0: 可変引数  's': 単純マクロ
+	# $DefineTbl{ $1 }->[ 1 ]:  マクロ定義本体
+	
+	if( /^ifdef\b(.*)/ ){
+		ExpandRepeatOutput( $BLKMODE_IF, !IfBlockEval( "defined $1" ));
+	}elsif( /^ifndef\b(.*)/ ){
+		ExpandRepeatOutput( $BLKMODE_IF,  IfBlockEval( "defined $1" ));
+	}elsif( /^if\b(.*)/ ){
+		ExpandRepeatOutput( $BLKMODE_IF, !IfBlockEval( $1 ));
+	}elsif( /^elif\b(.*)/ ){
+		if( $BlockMode != $BLKMODE_IF ){
+			Error( "unexpected #elif" );
+		}else{
+			$BlockNoOutput &= ~1;
+			$BlockNoOutput |= IfBlockEval( $1 ) ? 0 : 1;
+		}
+	}elsif( /^else\b/ ){
+		# else
+		if( $BlockMode != $BLKMODE_IF ){
+			Error( "unexpected #else" );
+		}else{
+			$BlockMode = $BLKMODE_ELSE;
+			$BlockNoOutput ^= 1;
+		}
+	}elsif( /^endif\b/ ){
+		# endif
+		if(
+			$BlockMode != $BLKMODE_IF &&
+			$BlockMode != $BLKMODE_ELSE
+		){
+			Error( "unexpected #endif" );
+		}else{
+			return 1;
+		}
+	}elsif( /^repeat\s*($OpenClose)/ ){
+		# repeat / endrepeat
+		RepeatOutput( $BlockMode, ExpandMacro( $1 ));
+	}elsif( /^endrep\b/ ){
+		if( $BlockMode != $BLKMODE_REPEAT ){
+			Error( "unexpected #endrep" );
+		}else{
+			return 1;
+		}
+	}elsif( /^perl\b/s ){
+		# perl / endper
+		ExecPerl( $1 );
+	}elsif( /^endperl\b/ ){
+		if( $BlockMode != $BLKMODE_PERL ){
+			Error( "unexpected #endperl" );
+		}else{
+			return 1;
+		}
+	}elsif( !$BlockNoOutput ){
+		if( /^define\s+($CSymbol)$/ ){
+			# 名前だけ定義
+			AddCppMacro( $1 );
+		}elsif( /^define\s+($CSymbol)\s+(.+)/ ){
+			# 名前と値定義
+			AddCppMacro( $1, $2 );
+		}elsif( /^define\s+($CSymbol)($OpenClose)\s+(.+)/ ){
+			# 関数マクロ
+			my( $Name, $ArgList, $Macro ) = ( $1, $2, $3 );
+			
+			# ArgList 整形，分割
+			$ArgList =~ s/^\(\s*//;
+			$ArgList =~ s/\s*\)$//;
+			my( @ArgList ) = split( /\s*,\s*/, $ArgList );
+			
+			# マクロ内の引数を特殊文字に置換
+			my $ArgNum = $#ArgList + 1;
+			
+			for( $i = 0; $i <= $#ArgList; ++$i ){
+				if( $i == $#ArgList && $ArgList[ $i ] eq '...' ){
+					$ArgNum = -$ArgNum;
+					last;
+				}
+				$Macro =~ s/\b$ArgList[ $i ]\b/__\$ARG_${i}\$__/g;
+			}
+			
+			AddCppMacro( $Name, $Macro, $ArgNum );
+		}elsif( /^undef\s+($CSymbol)$/ ){
+			# undef
+			undef( $DefineTbl{ $1 } );
+		}elsif( /^require\s+(.*)/			){ Require( $1 );
+		}else								 {
+			/(\S+)/;
+			Error( "unknown cpp directive '$1'" );
+		}
+	}
+	0;
+}
+
+### if ブロック用 eval #######################################################
+
+sub IfBlockEval {
+	local( $_ ) = @_;
+	
+	# defined 置換
+	s/\bdefined\s+($CSymbol)/defined( $DefineTbl{ $1 } )/ge;
+	return Evaluate( ExpandMacro( $_ ));
 }
 
 ### CPP マクロ展開 ###########################################################
 
 sub ExpandMacro {
-	local( $_ ) = @_;
+	local $_;
+	my $Mode;
+	
+	( $_, $Mode ) = @_;
+	
 	my $Line;
 	my $Line2;
 	my $Name;
@@ -1929,103 +1948,153 @@ sub ExpandMacro {
 	my $ArgNum;
 	my $i;
 	
+	$Mode = $EXPAND_CPP | $EXPAND_REP if( !defined( $Mode ));
+	
+	if( $BlockRepeat && $Mode & $EXPAND_REP ){
+		s/%(?:\{(.+?)\})?([+\-\d\.#]*[%cCdiouxXeEfgGnpsS])/ExpandPrintfFmtSub( $2, $1 )/ge;
+	}
+	
 	while( $bReplaced ){
 		$bReplaced = 0;
 		$Line = '';
 		
-		while( /\b($CSymbol)\b(.*)/s ){
-			$Line .= $`;
-			( $Name, $_ ) = ( $1, $2 );
-			
-			if( !defined( $DefineTbl{ $Name } )){
-				# マクロではない
-				$Line .= $Name;
-			}elsif( $DefineTbl{ $Name }->[ 0 ] eq 's' ){
-				# 単純マクロ
-				$Line .= $DefineTbl{ $Name }->[ 1 ];
-				$bReplaced = 1;
-			}else{
-				# 関数マクロ
-				s/^\s+//;
+		if( $Mode & $EXPAND_CPP ){
+			while( /\b($CSymbol)\b(.*)/s ){
+				$Line .= $`;
+				( $Name, $_ ) = ( $1, $2 );
 				
-				if( !/^\(/ ){
-					# hoge( になってない
-					Error( "invalid number of macro arg: $Name" );
+				if( !defined( $DefineTbl{ $Name } )){
+					# マクロではない
 					$Line .= $Name;
+				}elsif( $DefineTbl{ $Name }->[ 0 ] eq 's' ){
+					# 単純マクロ
+					$Line .= $DefineTbl{ $Name }->[ 1 ];
+					$bReplaced = 1;
 				}else{
-					# マクロ引数取得
-					while( 1 ){
-						s#[\t ]*/\*.*?\*/[\t ]*# #gs;
-						s#[\t ]*//.*$##gm;
-						last if( /^$OpenClose/ );
-						if( !( $Line2 = <fpDef> )){
-							Error( "unmatched function macro ')': $Name" );
-							$Line .= $Name;
-							last;
-						};
-						$_ .= $Line2;
-					}
+					# 関数マクロ
+					s/^\s+//;
 					
-					# マクロ引数解析
-					if( /^($OpenClose)(.*)/s ){
-						( $ArgList, $_ ) = ( $1, $2 );
-						$ArgList =~ s/[\t ]*[\x0D\x0A]+[\t ]*/ /g;
-						$ArgList =~ s/^\(\s*//;
-						$ArgList =~ s/\s*\)$//;
-						
-						undef( @ArgList );
-						
-						while( $ArgList ne '' ){
-							last if( $ArgList !~ /^\s*($OpenCloseArg)\s*(,?)\s*(.*)/ );
-							push( @ArgList, $1 );
-							$ArgList = $3;
-							
-							if( $2 ne '' && $ArgList eq '' ){
-								push( @ArgList, '' );
-							}
+					if( !/^\(/ ){
+						# hoge( になってない
+						Error( "invalid number of macro arg: $Name" );
+						$Line .= $Name;
+					}else{
+						# マクロ引数取得
+						while( 1 ){
+							s#[\t ]*/\*.*?\*/[\t ]*# #gs;
+							s#[\t ]*//.*$##gm;
+							last if( /^$OpenClose/ );
+							if( !( $Line2 = <fpDef> )){
+								Error( "unmatched function macro ')': $Name" );
+								$Line .= $Name;
+								last;
+							};
+							$_ .= $Line2;
 						}
 						
-						if( $ArgList eq '' ){
-							# 引数チェック
-							$ArgNum = $DefineTbl{ $Name }->[ 0 ];
-							$ArgNum = -$ArgNum - 1 if( $ArgNum < 0 );
+						# マクロ引数解析
+						if( /^($OpenClose)(.*)/s ){
+							( $ArgList, $_ ) = ( $1, $2 );
+							$ArgList =~ s/[\t ]*[\x0D\x0A]+[\t ]*/ /g;
+							$ArgList =~ s/^\(\s*//;
+							$ArgList =~ s/\s*\)$//;
 							
-							if( !(
-								$DefineTbl{ $Name }->[ 0 ] >= 0 ?
-									( $ArgNum == $#ArgList + 1 ) : ( $ArgNum <= $#ArgList + 1 )
-							)){
-								Error( "invalid number of macro arg: $Name" );
-								$Line .= $Name . '()';
-							}else{
-								# 仮引数を実引数に置換
-								$Line2 = $DefineTbl{ $Name }->[ 1 ];
-								for( $i = 0; $i < $ArgNum; ++$i ){
-									$Line2 =~ s/\b__\$ARG_${i}\$__\b/$ArgList[ $i ]/g;
-								}
+							undef( @ArgList );
+							
+							while( $ArgList ne '' ){
+								last if( $ArgList !~ /^\s*($OpenCloseArg)\s*(,?)\s*(.*)/ );
+								push( @ArgList, $1 );
+								$ArgList = $3;
 								
-								# 可変引数を置換
-								if( $DefineTbl{ $Name }->[ 0 ] < 0 ){
-									if( $#ArgList + 1 <= $ArgNum ){
-										# 引数 0 個の時は，カンマもろとも消す
-										$Line2 =~ s/,?\s*(?:##)*\s*__VA_ARGS__\s*/ /g;
-									}else{
-										$Line2 =~ s/(?:##\s*)?__VA_ARGS__/join( ', ', @ArgList[ $ArgNum .. $#ArgList ] )/ge;
-									}
+								if( $2 ne '' && $ArgList eq '' ){
+									push( @ArgList, '' );
 								}
-								$Line .= $Line2;
-								$bReplaced = 1;
 							}
-						}else{
-							# $ArgList を全部消費しきれなかったらエラー
-							Error( "invalid macro arg: $Name" );
-							$Line .= $Name . '()';
+							
+							if( $ArgList eq '' ){
+								# 引数チェック
+								$ArgNum = $DefineTbl{ $Name }->[ 0 ];
+								$ArgNum = -$ArgNum - 1 if( $ArgNum < 0 );
+								
+								if( !(
+									$DefineTbl{ $Name }->[ 0 ] >= 0 ?
+										( $ArgNum == $#ArgList + 1 ) : ( $ArgNum <= $#ArgList + 1 )
+								)){
+									Error( "invalid number of macro arg: $Name" );
+									$Line .= $Name . '()';
+								}else{
+									# 仮引数を実引数に置換
+									$Line2 = $DefineTbl{ $Name }->[ 1 ];
+									for( $i = 0; $i < $ArgNum; ++$i ){
+										$Line2 =~ s/\b__\$ARG_${i}\$__\b/$ArgList[ $i ]/g;
+									}
+									
+									# 可変引数を置換
+									if( $DefineTbl{ $Name }->[ 0 ] < 0 ){
+										if( $#ArgList + 1 <= $ArgNum ){
+											# 引数 0 個の時は，カンマもろとも消す
+											$Line2 =~ s/,?\s*(?:##)*\s*__VA_ARGS__\s*/ /g;
+										}else{
+											$Line2 =~ s/(?:##\s*)?__VA_ARGS__/join( ', ', @ArgList[ $ArgNum .. $#ArgList ] )/ge;
+										}
+									}
+									$Line .= $Line2;
+									$bReplaced = 1;
+								}
+							}else{
+								# $ArgList を全部消費しきれなかったらエラー
+								Error( "invalid macro arg: $Name" );
+								$Line .= $Name . '()';
+							}
 						}
 					}
 				}
 			}
+			$_ = $Line . $_;
 		}
-		
-		$_ = $Line . $_;
 	}
+	
+	if( $Mode & $EXPAND_EVAL ){
+		# sizeof 展開
+		s/\bsizeof($OpenClose)/SizeOf( $1 )/ge;
+		
+		# typeof 展開
+		s/\btypeof($OpenClose)/TypeOf( $1 )/ge;
+		
+		# Eval 展開
+		s/\$Eval($OpenClose)/Evaluate($1)/ge;
+	}
+	
+	$_;
+}
+
+sub ExpandPrintfFmtSub {
+	my( $Fmt, $Name ) = @_;
+	my $Num;
+	
+	if( !defined( $Name )){
+		$Name = '__REP_CNT__';
+	}
+	if( !defined( $DefineTbl{ $Name } )){
+		Error( "repeat var not defined '$Name'" );
+		return( 'undef' );
+	}
+	return( sprintf( "%$Fmt", $DefineTbl{ $Name }->[ 1 ] ));
+}
+
+### sizeof / typeof ##########################################################
+
+sub SizeOf {
+	local( $_ ) = @_;
+	s/,/+/g;
+	s/($CSymbol)/__SIZEOF_$1/g;
+	'$Eval' . $_;
+}
+
+sub TypeOf {
+	local( $_ ) = @_;
+	s/\(\s*//;
+	s/\s*\)//;
+	s/($CSymbol)/__TYPEOF_$1/e;
 	$_;
 }
