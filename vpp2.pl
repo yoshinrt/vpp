@@ -7,60 +7,7 @@
 #
 ##############################################################################
 #
-#	2004.07.12	input 宣言等のタブ不ぞろい等を整形するようにした
-#	2004.07.13	parameter をインスタンス時に変えれるようにした #(...)
-#	2004.07.26	$AllInputs 追加
-#				$Eval マクロ実装
-#	2004.07.14	(perlpp) #include MACRO に対応
-#	2004.07.16	ポート名をソートするようにした
-#	2004.07.30	ANSI 形式ポート宣言に対応
-#	2004.08.02	`define --> #define 変換をやめた (こんなことしてたとは...)
-#	2005.11.18	$repeat 追加
-#				$perl 追加 (最強...)
-#	2005.11.30	[HOGE-1:0] などの不明バス幅のとき，$ATTR_WEAK_W をつけてお茶を濁す
-#				普通のポート宣言のファイルを通すとおかしなファイルを吐くのを修正
-#				[perlpp] #ifdef <expr> の評価を強力にした
-#				input hoge,hoge2; 等がバグってた
-#	2005.12.02	変数名が end.* だとバグってた
-#	2005.12.05	$perl 処理タイミングを $repeat と同じに変更
-#	2005.12.06	$repeatplus 追加
-#				eval() のコンパイルエラー表示
-#				$repeat( A ) とかのエラー表示
-#				$AutoFix ( Hi-Z を自動的に固定 ) 追加
-#	2005.12.07	$repeat( 0 ) に対応
-#	2005.12.20	$requre 追加・@INC に -I パス追加
-#	2006.01.20	enum 使用時の perlpp に -nl 追加
-#	2006.01.27	instance の attr に U 追加
-#				[0:0] と '' を同一 bit 幅にみなすようにした
-#	2006.04.15	attr の UNC を使用可能にした
-#	2006.06.08	unmatch width 警告にモジュール名を表示
-#	2006.08.21	enum の bit width 定数を hoge_W --> hoge_w に変更
-#	2006.09.04	[X] でバス幅定義省略可能
-#				typeof / sizeof 追加
-#	2006.09.08	バス幅が ? のとき X にするのをやめた
-#	2006.09.14	instance で { hoge1, hoge2 } が wire 接続されている場合，
-#				それぞれをバス幅不明で個々に登録する
-#	2006.10.13	休出直前バージョン - instance で {6{1'b1}} を使用可にした
-#	2007.12.06	C-like ポート宣言内 parameter を削除
-#	2007.12.17	repeat に star, step パラメータ追加
-#				repeatplus 排除
-#	2007.12.27	enum 定数を #define → parameter に変更
-#	2008.03.25	reg\t → reg に修正した箇所がある
-#	2008.04.22	# 2 "hoge" などのファイル名変更以外の #hoge をスルー出力
-#	2008.04.23	$repeat の マイナスステップに対応
-#	2009.09.25	タブ幅指定・タブスペース変換を追加
-#	2010.02.16	port list をまじめに整形
-#	2010.09.16	[`HOGE:0] の宣言を正しく扱えなかったのを修正
-#				[...]hoge のようにスペースがないと変になったのを修正
-#				下位 mod の bit 幅が数値で無いとき，文字列としてそのまま適用する
-#				[X] のサポート無し
-#				module_inc モード追加
-#	2012.02.16	$MODMODE_TESTINC の定義が抜けていた
-#	2012.02.22	//# が消えないのを修正
-#	2012.04.11	並列実行できるよう vpp.tmp->vpp.$$.tmp に修正
-#	2013.01.16	2次元配列の後ろの [...] に反応しておかしくなってたのを修正
-#	2013.01.17	$repeat のネストに対応
-#	2013.01.18	GetModuleIO() で parameter を wire 扱いにした
+#	2013.12.12	perlpp 内蔵
 #
 ##############################################################################
 $enum = 1;
@@ -95,7 +42,8 @@ $TabWidth = 4;	# タブ幅
 $TabWidthType	= 8;	# input / output 等
 $TabWidthBit	= 8;	# [xx:xx]
 
-$OpenClose = qr/\([^()]*(?:(??{$OpenClose})[^()]*)*\)/;
+$OpenClose		= qr/\([^()]*(?:(??{$OpenClose})[^()]*)*\)/;
+$OpenCloseArg	= qr/[^(),]*(?:(??{$OpenClose})[^(),]*)*/;
 $Debug	= 0;
 
 $MODMODE_NORMAL		= 0;
@@ -121,8 +69,6 @@ sub main{
 		print( "usage: vpp.pl <Def file>\n" );
 		return;
 	}
-	
-	$LineCnt = 0;
 	
 	# vpp.pl 実行 dir の設定 perlpp 用
 	
@@ -167,7 +113,8 @@ sub main{
 	
 	unlink( $ListFile );
 	
-	&VPreProcessor( $DefFile, $CppFile, "-l" . $CppMacroDef );
+#	&VPreProcessor( $DefFile, $CppFile, "-l" . $CppMacroDef );
+	system( "cp $DefFile $CppFile" );
 	
 	system( "cp $CppFile stage1" ) if( $Debug );
 	
@@ -179,8 +126,7 @@ sub main{
 	
 	open( fpRTL, "> $VppFile" );
 	
-	$LineCnt = 0;
-	&ExpandRepeatParser( 0 );
+	&ExpandRepeatParser();
 	
 	close( fpRTL );
 	close( fpDef );
@@ -199,7 +145,6 @@ sub main{
 		open( fpRTL, "| expand -$TabWidth > $VppFile" ) :
 		open( fpRTL, "> $VppFile" );
 	
-	$LineCnt = 0;
 	$bParsing = 1;
 	&MultiLineParser( $Line );
 	
@@ -273,11 +218,9 @@ sub OutputBusTypeDef{
 sub MultiLineParser {
 	
 	while( $Line = <fpDef> ){
-		++$LineCnt;
-		
 		( $Word, $Line2 ) = &GetWord( $Line );
 		
-		if    ( $Line =~ /^#/			){ &CppDirective( $Line );
+		if    ( $Line =~ /^#/			){ &CppDirectiveLine( $Line );
 		}elsif( $Word eq 'module'		){ &StartModule( $Line2 );
 		}elsif( $Word eq 'module_inc'	){ &StartModule( $Line2 ); $iModuleMode = $MODMODE_INC;
 		}elsif( $Word eq 'endmodule'	){ &EndModule( $Line );
@@ -286,8 +229,6 @@ sub MultiLineParser {
 		}elsif( $Word eq '$file'		){ &DefineFileName( $Line2 );
 		}elsif( $Word eq '$wire'		){ &DefineDefWireSkel( $Line2 );
 		}elsif( $Word eq '$header'		){ &OutputHeader();
-		}elsif( $Word eq '$repeat'		){ &RepeatOutput( $Line2 );
-		}elsif( $Word eq '$end'			){ return;
 		}elsif( $Word eq 'testmodule'	){ &StartModule( $Line2 ); $iModuleMode = $MODMODE_TEST;
 		}elsif( $Word eq 'testmodule_inc'){ &StartModule( $Line2 ); $iModuleMode = $MODMODE_TESTINC;
 		}elsif( $Word eq '$AllInputs'	){ &PrintAllInputs( $Line2, $Line );
@@ -310,21 +251,84 @@ sub MultiLineParser {
 my( %RepeatVarTbl );
 
 sub ExpandRepeatParser {
-	my( $bRepeating, $RepCnt ) = @_;
+	my( $bOutput, $bRepeating, $RepCnt ) = @_;
+	$bOutput	= 1 if( !defined( $bOutput ));
+	$bRepeating	= 0 if( !defined( $bRepeating ));
+	
 	local( $_ );
+	my $Line;
+	my $i;
 	
 	while( <fpDef> ){
-		++$LineCnt;
-		
-		( $Word, $Line2 ) = &GetWord( $_ );
-		
-		if    ( $Word eq '$repeat'		){ &RepeatOutput( $Line2 );
-		}elsif( $Word eq '$end'			){ return;
-		}elsif( $Word eq '$perl'		){ &ExecPerl( $Line2 );
-		}elsif( $Word eq '$require'		){ &Require( $Line2 );
-		}else							 {
-			$_ = &ExpandPrintfFmt( $_, $RepCnt ) if( $bRepeating );
+		if( /^\s*#/	){
+			# \ で終わっている行を連結
+			while( /\\$/ ){
+				if( !( $Line = <fpDef> )){
+					last;
+				}
+				$_ .= $Line;
+			}
 			
+			# コメント類削除
+			s#[\t ]*/\*.*?\*/[\t ]*# #gs;
+			s#[\t ]*//.*$##gm;
+			
+			# \ 削除
+			s/[\t ]*\\[\x0D\x0A]+[\t ]*/ /g;
+			s/\s+$//g;
+			s/^\s*#\s*//;
+			
+			# $DefineTbl{ $1 }->[ 0 ]:  >=0: 引数  <0: 可変引数  's': 単純マクロ
+			# $DefineTbl{ $1 }->[ 1 ]:  マクロ定義本体
+			
+			if( /^define\s+($CSymbol)$/ ){
+				# 名前だけ定義
+				AddCppMacro( $1 );
+			}elsif( /^define\s+($CSymbol)\s+(.+)/ ){
+				# 名前と値定義
+				AddCppMacro( $1, $2 );
+			}elsif( /^define\s+($CSymbol)($OpenClose)\s+(.+)/ ){
+				# 関数マクロ
+				local( $Name, $ArgList, $Macro ) = ( $1, $2, $3 );
+				
+				# ArgList 整形，分割
+				$ArgList =~ s/^\(\s*//;
+				$ArgList =~ s/\s*\)$//;
+				local( @ArgList ) = split( /\s*,\s*/, $ArgList );
+				
+				# マクロ内の引数を特殊文字に置換
+				my $ArgNum = $#ArgList + 1;
+				
+				for( $i = 0; $i <= $#ArgList; ++$i ){
+					if( $i == $#ArgList && $ArgList[ $i ] eq '...' ){
+						$ArgNum = -$ArgNum;
+						last;
+					}
+					$Macro =~ s/\b$ArgList[ $i ]\b/__\$ARG_${i}\$__/g;
+				}
+				
+				AddCppMacro( $Name, $Macro, $ArgNum );
+			}elsif( /^undef\s+($CSymbol)$/ ){
+				# undef
+				undef( $DefineTbl{ $1 } );
+			}elsif( /^ifdef\b/ ){
+			}elsif( /^ifndef\b/ ){
+			}elsif( /^if\b/ ){
+			}elsif( /^elif\b/ ){
+			}elsif( /^else\b/ ){
+			}elsif( /^endif\b/ ){
+			}elsif( /^repeat\s*($OpenClose)/	){ &RepeatOutput( $1 );
+			}elsif( /^endrep\b/					){ return;
+			}elsif( /^perl\s+(.*)/s				){ &ExecPerl( $1 );
+			}elsif( /^require\s+(.*)/			){ &Require( $1 );
+			}else								 {
+				/(\S+)/;
+				Error( "unknown cpp directive '$1'" );
+			}
+		}else{
+			$_ = ExpandMacro( $_ );
+			
+			$_ = &ExpandPrintfFmt( $_, $RepCnt ) if( $bRepeating );
 			&PrintRTL( $_ );
 		}
 	}
@@ -384,7 +388,6 @@ sub StartModule{
 		my( $CLikePortDef ) = 0;
 		
 		while( <fpDef> ){
-			++$LineCnt;
 			last if( /\s*\);/ );
 			next if( /^\s*\(\s*$/ || /^#/ );
 			
@@ -1019,15 +1022,13 @@ sub GetWord{
 
 sub Error{
 	local( $Msg ) = @_;
-	
-	print( "$DefFile($LineCnt): $Msg\n" );
+	printf( "$DefFile(%d): $Msg\n", $. );
 	++$ErrorCnt;
 }
 
 sub Warning{
 	local( $Msg ) = @_;
-	
-	print( "$DefFile($LineCnt): Warning: $Msg\n" );
+	printf( "$DefFile(%d): Warning: $Msg\n", $. );
 }
 
 ### define output file name ##################################################
@@ -1079,7 +1080,6 @@ sub SkipToSemiColon{
 	
 	do{
 		goto ExitLoop if( $Line =~ s/.*?;//g );
-		++$LineCnt;
 	}while( $Line = <fpDef> );
 	
   ExitLoop:
@@ -1098,8 +1098,6 @@ sub ReadSkelList{
 	);
 	
 	while( $Line = <fpDef> ){
-		++$LineCnt;
-		
 		$Line =~ s/\/\/.*//g;
 		next if( $Line =~ /^\s*$/ );
 		last if( $Line =~ /^\s*\);/ );
@@ -1658,20 +1656,6 @@ sub VPreProcessor{
 	unlink( $Tmp );
 }
 
-### cpp directive # 0 "hogehoge" #############################################
-
-sub CppDirective{
-	
-	local( $Line ) = @_;
-	
-	if( $Line =~ /^#\s*(\d+)\s+"(.*)"/ ){
-		$LineCnt = $1 - 1;
-		$DefFile = ( $2 eq "-" ) ? $ARGV[ 0 ] : $2;
-	}else{
-		&PrintRTL( $Line );
-	}
-}
-
 ### repeat output ############################################################
 # syntax:
 #   $repeat( [ name: ] REPEAT_NUM ) or $repeat( [ name: ] start [, stop [, step ]] )
@@ -1683,6 +1667,7 @@ sub CppDirective{
 sub RepeatOutput{
 	my( $RepCntEd ) = @_;
 	my( $RewindPtr ) = tell( fpDef );
+	my( $LineCnt ) = $.;
 	my( $bPrintEnb ) = $bPrintRTL_Enable;
 	my( $RepCnt );
 	my( $VarName );
@@ -1728,7 +1713,8 @@ sub RepeatOutput{
 	){
 		$RepeatVarTbl{ $VarName } = $RepCnt if( defined( $VarName ));
 		seek( fpDef, $RewindPtr, SEEK_SET );
-		&ExpandRepeatParser( 1, $RepCnt );
+		$. = $LineCnt;
+		&ExpandRepeatParser( 1, 1, $RepCnt );
 	}
 	
 	$bPrintRTL_Enable = $bPrintEnb;
@@ -1751,8 +1737,6 @@ sub ExecPerl {
 	$EofStr =~ s/^\s*(\S+)/$1/;
 	
 	while( <fpDef> ){
-		++$LineCnt;
-		
 		last if( /^\s*$EofStr$/ );
 #		s/#.*//;
 		$PerlCode .= $_;
@@ -1800,8 +1784,6 @@ sub Enumerate{
 	
 	if( $Line !~ /;/ ){
 		while( $Line = <fpDef> ){
-			++$LineCnt;
-			
 			$Buf .= $Line;
 			last if( $Line =~ /;/ );
 		}
@@ -1933,4 +1915,152 @@ sub SetBusSize {
 		$WireListWidth[ $i ] = $Bus;
 		$WireListAttr [ $i ] &= ~$ATTR_WEAK_W;
 	}
+}
+
+### cpp directive # 0 "hogehoge" #############################################
+
+sub CppDirectiveLine{
+	
+	local( $Line ) = @_;
+	
+	if( $Line =~ /^#\s*(\d+)\s+"(.*)"/ ){
+		$. = $1 - 1;
+		$DefFile = ( $2 eq "-" ) ? $ARGV[ 0 ] : $2;
+	}else{
+		&PrintRTL( $Line );
+	}
+}
+
+### CPP directive 処理 #######################################################
+
+sub AddCppMacro {
+	my( $Name, $Macro, $Args ) = @_;
+	
+	$Macro	= '1' if( !defined( $Macro ));
+	$Args	= 's' if( !defined( $Args ));
+	
+	if(
+		defined( $DefineTbl{ $1 } ) &&
+		( $DefineTbl{ $1 }->[ 0 ] != $Args || $DefineTbl{ $1 }->[ 1 ] != $Macro )
+	){
+		Warning( "redefined macro '$Name'" );
+	}
+	
+	$DefineTbl{ $Name } = [ $Args, $Macro ];
+}
+
+sub CppDirective {
+}
+
+### CPP マクロ展開 ###########################################################
+
+sub ExpandMacro {
+	local( $_ ) = @_;
+	my $Line;
+	my $Line2;
+	my $Name;
+	my $bReplaced = 1;
+	my $ArgList, @ArgList;
+	my $ArgNum;
+	my $i;
+	
+	while( $bReplaced ){
+		$bReplaced = 0;
+		$Line = '';
+		
+		while( /\b($CSymbol)\b(.*)/s ){
+			$Line .= $`;
+			( $Name, $_ ) = ( $1, $2 );
+			
+			if( !defined( $DefineTbl{ $Name } )){
+				# マクロではない
+				$Line .= $Name;
+			}elsif( $DefineTbl{ $Name }->[ 0 ] eq 's' ){
+				# 単純マクロ
+				$Line .= $DefineTbl{ $Name }->[ 1 ];
+				$bReplaced = 1;
+			}else{
+				# 関数マクロ
+				s/^\s+//;
+				
+				if( !/^\(/ ){
+					# hoge( になってない
+					Error( "invalid number of macro arg: $Name" );
+					$Line .= $Name;
+				}else{
+					# マクロ引数取得
+					while( 1 ){
+						s#[\t ]*/\*.*?\*/[\t ]*# #gs;
+						s#[\t ]*//.*$##gm;
+						last if( /^$OpenClose/ );
+						if( !( $Line2 = <fpDef> )){
+							Error( "unmatched function macro ')': $Name" );
+							$Line .= $Name;
+							last;
+						};
+						$_ .= $Line2;
+					}
+					
+					# マクロ引数解析
+					if( /^($OpenClose)(.*)/s ){
+						( $ArgList, $_ ) = ( $1, $2 );
+						$ArgList =~ s/[\t ]*[\x0D\x0A]+[\t ]*/ /g;
+						$ArgList =~ s/^\(\s*//;
+						$ArgList =~ s/\s*\)$//;
+						
+						undef( @ArgList );
+						
+						while( $ArgList ne '' ){
+							last if( $ArgList !~ /^\s*($OpenCloseArg)\s*(,?)\s*(.*)/ );
+							push( @ArgList, $1 );
+							$ArgList = $3;
+							
+							if( $2 ne '' && $ArgList eq '' ){
+								push( @ArgList, '' );
+							}
+						}
+						
+						if( $ArgList eq '' ){
+							# 引数チェック
+							$ArgNum = $DefineTbl{ $Name }->[ 0 ];
+							$ArgNum = -$ArgNum - 1 if( $ArgNum < 0 );
+							
+							if( !(
+								$DefineTbl{ $Name }->[ 0 ] >= 0 ?
+									( $ArgNum == $#ArgList + 1 ) : ( $ArgNum <= $#ArgList + 1 )
+							)){
+								Error( "invalid number of macro arg: $Name" );
+								$Line .= $Name . '()';
+							}else{
+								# 仮引数を実引数に置換
+								$Line2 = $DefineTbl{ $Name }->[ 1 ];
+								for( $i = 0; $i < $ArgNum; ++$i ){
+									$Line2 =~ s/\b__\$ARG_${i}\$__\b/$ArgList[ $i ]/g;
+								}
+								
+								# 可変引数を置換
+								if( $DefineTbl{ $Name }->[ 0 ] < 0 ){
+									if( $#ArgList + 1 <= $ArgNum ){
+										# 引数 0 個の時は，カンマもろとも消す
+										$Line2 =~ s/,?\s*(?:##)*\s*__VA_ARGS__\s*/ /g;
+									}else{
+										$Line2 =~ s/(?:##\s*)?__VA_ARGS__/join( ', ', @ArgList[ $ArgNum .. $#ArgList ] )/ge;
+									}
+								}
+								$Line .= $Line2;
+								$bReplaced = 1;
+							}
+						}else{
+							# $ArgList を全部消費しきれなかったらエラー
+							Error( "invalid macro arg: $Name" );
+							$Line .= $Name . '()';
+						}
+					}
+				}
+			}
+		}
+		
+		$_ = $Line . $_;
+	}
+	$_;
 }
