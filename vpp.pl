@@ -7,57 +7,6 @@
 #
 ##############################################################################
 #
-#	2004.07.12	input 宣言等のタブ不ぞろい等を整形するようにした
-#	2004.07.13	parameter をインスタンス時に変えれるようにした #(...)
-#	2004.07.26	$AllInputs 追加
-#				$Eval マクロ実装
-#	2004.07.14	(perlpp) #include MACRO に対応
-#	2004.07.16	ポート名をソートするようにした
-#	2004.07.30	ANSI 形式ポート宣言に対応
-#	2004.08.02	`define --> #define 変換をやめた (こんなことしてたとは...)
-#	2005.11.18	$repeat 追加
-#				$perl 追加 (最強...)
-#	2005.11.30	[HOGE-1:0] などの不明バス幅のとき，$ATTR_WEAK_W をつけてお茶を濁す
-#				普通のポート宣言のファイルを通すとおかしなファイルを吐くのを修正
-#				[perlpp] #ifdef <expr> の評価を強力にした
-#				input hoge,hoge2; 等がバグってた
-#	2005.12.02	変数名が end.* だとバグってた
-#	2005.12.05	$perl 処理タイミングを $repeat と同じに変更
-#	2005.12.06	$repeatplus 追加
-#				eval() のコンパイルエラー表示
-#				$repeat( A ) とかのエラー表示
-#				$AutoFix ( Hi-Z を自動的に固定 ) 追加
-#	2005.12.07	$repeat( 0 ) に対応
-#	2005.12.20	$requre 追加・@INC に -I パス追加
-#	2006.01.20	enum 使用時の perlpp に -nl 追加
-#	2006.01.27	instance の attr に U 追加
-#				[0:0] と '' を同一 bit 幅にみなすようにした
-#	2006.04.15	attr の UNC を使用可能にした
-#	2006.06.08	unmatch width 警告にモジュール名を表示
-#	2006.08.21	enum の bit width 定数を hoge_W --> hoge_w に変更
-#	2006.09.04	[X] でバス幅定義省略可能
-#				typeof / sizeof 追加
-#	2006.09.08	バス幅が ? のとき X にするのをやめた
-#	2006.09.14	instance で { hoge1, hoge2 } が wire 接続されている場合，
-#				それぞれをバス幅不明で個々に登録する
-#	2006.10.13	休出直前バージョン - instance で {6{1'b1}} を使用可にした
-#	2007.12.06	C-like ポート宣言内 parameter を削除
-#	2007.12.17	repeat に star, step パラメータ追加
-#				repeatplus 排除
-#	2007.12.27	enum 定数を #define → parameter に変更
-#	2008.03.25	reg\t → reg に修正した箇所がある
-#	2008.04.22	# 2 "hoge" などのファイル名変更以外の #hoge をスルー出力
-#	2008.04.23	$repeat の マイナスステップに対応
-#	2009.09.25	タブ幅指定・タブスペース変換を追加
-#	2010.02.16	port list をまじめに整形
-#	2010.09.16	[`HOGE:0] の宣言を正しく扱えなかったのを修正
-#				[...]hoge のようにスペースがないと変になったのを修正
-#				下位 mod の bit 幅が数値で無いとき，文字列としてそのまま適用する
-#				[X] のサポート無し
-#				module_inc モード追加
-#	2012.02.16	$MODMODE_TESTINC の定義が抜けていた
-#	2012.02.22	//# が消えないのを修正
-#	2012.04.11	並列実行できるよう vpp.tmp->vpp.$$.tmp に修正
 #	2013.01.16	2次元配列の後ろの [...] に反応しておかしくなってたのを修正
 #	2013.01.17	$repeat のネストに対応
 #	2013.01.18	GetModuleIO() で parameter を wire 扱いにした
@@ -94,11 +43,14 @@ my $EXPAND_CPP		= $enum;		# CPP マクロ展開
 my $EXPAND_REP		= $enum <<= 1;	# repeat マクロ展開
 my $EXPAND_EVAL		= $enum <<= 1;	# $Eval 展開
 
-my $CSymbol		= '\b[_a-zA-Z]\w*\b';
-#$DefSkelPort	= "[io]?(.*)";
-my $DefSkelPort	= "(.*)";
-my $DefSkelWire	= "\$1";
-my $UnknownBusType	= '\[X[^\]]*\]';
+my $MODMODE_NORMAL	= 0;
+my $MODMODE_TEST	= 1 << 0;
+my $MODMODE_INC		= 1 << 1;
+my $MODMODE_TESTINC	= $MODMODE_TEST | $MODMODE_INC;
+
+my $CSymbol			= '\b[_a-zA-Z]\w*\b';
+my $DefSkelPort		= "(.*)";
+my $DefSkelWire		= "\$1";
 
 my $tab0 = 4 * 2;
 my $tab1 = 4 * 7;
@@ -115,19 +67,12 @@ my $OpenClose;
 my $OpenCloseArg	= qr/[^(),]*(?:(??{$OpenClose})[^(),]*)*/;
 my $Debug	= 0;
 
-my $MODMODE_NORMAL	= 0;
-my $MODMODE_TEST	= 1 << 0;
-my $MODMODE_INC		= 1 << 1;
-my $MODMODE_TESTINC	= $MODMODE_TEST | $MODMODE_INC;
-
 my $SEEK_SET = 0;
 
 my( $DefFile, $RTLFile, $ListFile, $CppFile, $VppFile );
-my $bInModule;
-my $bAutoFix;
-my $bParsing;
-my $bPostProcess;
+my $PrintBuf;
 my $RTLBuf;
+my $PerlBuf;
 my $ModuleName;
 my $ExpandTab;
 my $BlockNoOutput = 0;
@@ -140,7 +85,6 @@ my @SkelList;
 my $iModuleMode;
 my $PortList;
 my $PortDef;
-my @EnumListWidth;
 my %DefineTbl;
 my %EnumListWidth;
 
@@ -151,11 +95,6 @@ exit( $ErrorCnt != 0 );
 
 sub main{
 	local( $_ );
-	my(
-		$Line,
-		$Line2,
-		$Word,
-	);
 	
 	if( $#ARGV < 0 ){
 		print( "usage: vpp.pl <Def file>\n" );
@@ -233,8 +172,7 @@ sub main{
 		open( fpRTL, "| expand -$TabWidth > $RTLFile" ) :
 		open( fpRTL, "> $RTLFile" );
 	
-	$bParsing = 1;
-	MultiLineParser( $Line );
+	MultiLineParser();
 	
 	close( fpRTL );
 	close( fpDef );
@@ -260,14 +198,11 @@ sub MultiLineParser {
 		}elsif( $Word eq 'endmodule'	){ EndModule( $_ );
 		}elsif( $Word eq 'instance'		){ DefineInst( $Line );
 		}elsif( $Word eq 'enum'			){ Enumerate( $Line );
-		}elsif( $Word eq '$file'		){ DefineFileName( $Line );
 		}elsif( $Word eq '$wire'		){ DefineDefWireSkel( $Line );
 		}elsif( $Word eq '$header'		){ OutputHeader();
 		}elsif( $Word eq 'testmodule'	){ StartModule( $Line ); $iModuleMode = $MODMODE_TEST;
 		}elsif( $Word eq 'testmodule_inc'){StartModule( $Line ); $iModuleMode = $MODMODE_TESTINC;
 		}elsif( $Word eq '$AllInputs'	){ PrintAllInputs( $Line, $_ );
-		}elsif( $Word eq '$AutoFix'		){ $bAutoFix = ( $Line =~ /\bon\b/ );
-		}elsif( $Word eq '$SetBusSize'	){ SetBusSize( $_ );
 		}elsif(
 			$Word eq '_module' ||
 			$Word eq '_endmodule'
@@ -380,7 +315,7 @@ sub ExpandRepeatOutput {
 				}
 			}elsif( /^perl\b/s ){
 				# perl / endperl
-				ExecPerl( $1 );
+				ExecPerl();
 			}elsif( /^endperl\b/ ){
 				if( $BlockMode != $BLKMODE_PERL ){
 					Error( "unexpected #endperl" );
@@ -454,9 +389,7 @@ sub StartModule{
 	$PortList		= '';
 	$PortDef		= '';
 	
-	@EnumListWidth	= ();
-	
-	$bInModule	= 1;
+	$PrintBuf	= \$RTLBuf;
 	$RTLBuf		= "";
 	
 	( $ModuleName, $Line ) = GetWord( $Line );
@@ -555,11 +488,9 @@ sub EndModule{
 	
 	PrintRTL( '//' ) if( $iModuleMode & $MODMODE_INC );
 	PrintRTL( $Line );
-	$bInModule = 0;
+	undef( $PrintBuf );
 	
 	# module port リストを出力
-	
-	#SortPort();
 	
 	$bFirst = 1;
 	PrintRTL( '//' ) if( $iModuleMode & $MODMODE_INC );
@@ -573,7 +504,6 @@ sub EndModule{
 			$Type = QueryWireType( $Wire, $bCLikePortDef ? 'd' : '' );
 			
 			if( $Type eq "input" || $Type eq "output" || $Type eq "inout" ){
-				#PrintRTL( "\t$WireList[ $i ]->{ 'name' },\n" );
 				$PortList .= "\t$Wire->{ 'name' },\n";
 			}
 		}
@@ -611,33 +541,6 @@ sub EndModule{
 			}
 			
 			PrintRTL( "$Wire->{ 'name' };\n" );
-		}
-	}
-	
-	# Hi-Z autofix
-	
-	if( $bAutoFix ){
-		foreach $Wire ( @WireList ){
-			
-			( $MSB,	$LSB ) = GetBusWidth( $Wire->{ 'width' } );
-			
-			if( defined( $Wire->{ 'drive' } )){
-				( $MSB_Drv, $LSB_Drv ) = GetBusWidth( $Wire->{ 'drive' } );
-				
-				# 部分代入されている
-				if( $MSB > $MSB_Drv ){
-					PrintRTL( sprintf( "\tassign %s[%d:%d]\t= %d'd0;\n",
-						$Wire->{ 'name' }, $MSB, $MSB_Drv + 1, $MSB - $MSB_Drv
-					));
-				}elsif( $LSB < $LSB_Drv ){
-					PrintRTL( sprintf( "\tassign %s[%d:%d]\t= %d'd0;\n",
-						$Wire->{ 'name' }, $LSB_Drv - 1, $LSB_Drv, $LSB_Drv - $LSB
-					));
-				}
-			}else{
-				# 代入されていない
-				PrintRTL( sprintf( "\tassign $Wire->{ 'name' }\t= %d'd0;\n", $MSB - $LSB + 1 ));
-			}
 		}
 	}
 	
@@ -683,15 +586,6 @@ sub PrintRTL{
 	local( $_ ) = @_;
 	my( $tmp );
 	
-	# (in|out)put  [X] hoge〜 処理
-	if( $bParsing ){
-		if( /$UnknownBusType/ ){
-			s/$UnknownBusType(\s+)($CSymbol)/TYPEOF_$2$1$2/g;
-			
-			$bPostProcess = 1;
-		}
-	}
-	
 	# outreg / ioreg 処理
 	
 	if( /\b(out|io)reg\b/ ){
@@ -700,7 +594,7 @@ sub PrintRTL{
 		s/\boutreg\b/output/g || s/\bioreg\b/inout/g;
 		$tmp =~ s/\b(out|io)reg\b/reg\t/g;
 		
-		$_ .= $tmp . sprintf( "# %d \"$DefFile\"\n", $. + 1 );;
+		$_ .= $tmp . sprintf( "# %d \"$DefFile\"\n", $. + 1 );
 	}
 	
 	# Case / FullCase 処理
@@ -708,8 +602,8 @@ sub PrintRTL{
 	s|\bC(asex?\s*\(.*\))|c$1 /* synopsys parallel_case */|g;
 	s|\bFullC(asex?\s*\(.*\))|c$1 /* synopsys parallel_case full_case */|g;
 	
-	if( $bInModule ){
-		$RTLBuf .= $_;
+	if( defined( $PrintBuf )){
+		$$PrintBuf .= $_;
 	}else{
 		print( fpRTL $_ );
 	}
@@ -897,12 +791,6 @@ sub DefineInst{
 			
 			$tmp .= "( $Wire";
 			$Len += length( $Wire ) + 2;
-			
-			if( $bAutoFix && $BitWidthWire ne '' && $Wire =~ /^$CSymbol$/ ){
-				$tmp2 = FormatBusWidth( $BitWidthWire );
-				$Len += length( $tmp2 );
-				$tmp .= $tmp2;
-			}
 			
 			$tmp .= "\t" x (( $tab2 - $Len + $TabWidth - 1 ) / $TabWidth );
 			$Len  = $tab2;
@@ -1098,13 +986,6 @@ sub Warning{
 	my $LineNo;
 	( $_, $LineNo ) = @_;
 	printf( "$DefFile(%d): Warning: $_\n", $LineNo || $. );
-}
-
-### define output file name ##################################################
-
-sub DefineFileName{
-	( $RTLFile ) = @_;
-	$RTLFile =~ s/\s*(\S*)/$1/g;
 }
 
 ### define default port --> wire name ########################################
@@ -1352,13 +1233,13 @@ sub RegisterWire{
 	}else{
 		# 新規登録
 		
-		push( @WireList, {
+		push( @WireList, $Wire = {
 			'name'	=> $Name,
 			'width'	=> $BitWidth,
 			'attr'	=> $Attr
 		} );
 		
-		$WireList{ $Name } = $Wire = $WireList[ $#WireList ];
+		$WireList{ $Name } = $Wire;
 	}
 	
 	# ドライブされている bit width を計算
@@ -1480,24 +1361,21 @@ sub OutputWireList{
 
 sub ExpandBus{
 	
-	my( $i );
 	my(
-		$Wire,
+		$Name,
 		$Attr,
 		$BitWidth,
-		$WireCnt
+		$Wire
 	);
 	
-	$WireCnt = $#WireList + 1;
-	
-	for( $i = 0; $i < $WireCnt; ++$i ){
-		if( $WireList[ $i ]->{ 'name' } =~ /\$n/ && $WireList[ $i ]->{ 'width' } ne "" ){
+	foreach $Wire ( @WireList ){
+		if( $Wire->{ 'name' } =~ /\$n/ && $Wire->{ 'width' } ne "" ){
 			
 			# 展開すべきバス
 			
-			$Wire		= $WireList[ $i ]->{ 'name' };
-			$Attr		= $WireList[ $i ]->{ 'attr' };
-			$BitWidth	= $WireList[ $i ]->{ 'width' };
+			$Name		= $Wire->{ 'name' };
+			$Attr		= $Wire->{ 'attr' };
+			$BitWidth	= $Wire->{ 'width' };
 			
 			# FR wire なら F とみなす
 			
@@ -1506,19 +1384,19 @@ sub ExpandBus{
 			}
 			
 			if( $Attr & ( $ATTR_REF | $ATTR_BYDIR )){
-				ExpandBus2( $Wire, $BitWidth, $Attr, 'ref' );
+				ExpandBus2( $Name, $BitWidth, $Attr, 'ref' );
 			}
 			
 			if( $Attr & ( $ATTR_FIX | $ATTR_BYDIR )){
-				ExpandBus2( $Wire, $BitWidth, $Attr, 'fix' );
+				ExpandBus2( $Name, $BitWidth, $Attr, 'fix' );
 			}
 			
 			# List 情報の修正
 			
-			$WireList[ $i ]->{ 'attr' } |= ( $ATTR_REF | $ATTR_FIX );
+			$Wire->{ 'attr' } |= ( $ATTR_REF | $ATTR_FIX );
 		}
 		
-		$WireList[ $i ]->{ 'name' } =~ s/\$n//g;
+		$Wire->{ 'name' } =~ s/\$n//g;
 	}
 }
 
@@ -1569,43 +1447,6 @@ sub ExpandBus2{
 	PrintRTL( "\n\t}" );
 	PrintRTL( " = $WireBus" ) if( $Dir eq 'fix' );
 	PrintRTL( ";\n\n" );
-}
-
-### sort bus #################################################################
-
-sub SortPort {
-	
-	my( $Wire, @List, $_ );
-	
-	@List = ();
-	
-	# ワイヤー名と属性をひとつの配列にまとめる
-	
-	foreach $Wire ( @WireList ){
-		push( @List,
-			( QueryWireType( $Wire, '' ) eq 'wire' ? "\xFF" : '' ) .
-			"$Wire->{ 'name' }\t$Wire->{ 'attr' }\t$Wire->{ 'width' }"
-		);
-	}
-	
-	# ソート
-	@List = sort( @List );
-	@WireList = ();
-	%WireList = ();
-	
-	# 各配列に書き戻す
-	foreach $_ ( @List ){
-		/\xFF?(.*)/;
-		@_ = split( /\t/, $1 );
-		
-		push( @WireList, {
-			'name'	=> $_[ 0 ],
-			'attr'	=> $_[ 1 ],
-			'width'	=> $_[ 2 ]
-		} );
-		
-		$WireList{ $_[ 0 ] } = $WireList[ $#WireList ];
-	}
 }
 
 ### 10:2 形式の表記のバス幅を get する #######################################
@@ -1722,34 +1563,34 @@ sub IsNumber {
 #   EOF
 
 sub ExecPerl {
-	my( $EofStr ) = @_;
-	my( $PerlCode );
+	local $_;
 	
-	$EofStr =~ s/^\s*(\S+)/$1/;
+	# print buffer 切り替え
+	my $PrevPrintBuf = $PrintBuf;
+	$PrintBuf = \$PerlBuf;
 	
-	while( <fpDef> ){
-		last if( /^\s*$EofStr$/ );
-#		s/#.*//;
-		$PerlCode .= $_;
-	}
+	# perl code 取得
+	ExpandRepeatOutput( $BLKMODE_PERL );
+	$PrintBuf = $PrevPrintBuf;
 	
-#	$PerlCode =~ s/\$Eval\s*\(/(/g;
-	$PerlCode = EvaluateLine( $PerlCode );
+	$PerlBuf =~ s/^\s*#.*$//gm;
+	$PerlBuf = EvaluateLine( $PerlBuf );
 	
 	if( $Debug ){
 		print( "\n=========== perl code =============\n" );
-		print( $PerlCode );
+		print( $PerlBuf );
 		print( "\n===================================\n" );
 	}
 	$_ = ();
-	$_ = eval( $PerlCode );
+	$_ = eval( $PerlBuf );
 	Error( $@ ) if( $@ ne '' );
 	if( $Debug ){
 		print( "\n=========== output code =============\n" );
 		print( $_ );
 		print( "\n===================================\n" );
 	}
-	PrintRTL( $_ );
+	
+	PrintRTL( sprintf( "$_\n# %d \"$DefFile\"\n", $. + 1 ));
 }
 
 ### enum state ###############################################################
@@ -1766,9 +1607,6 @@ sub Enumerate{
 		$BitWidth,
 		$i
 	);
-	
-	# post preprocess 要求
-	#$bPostProcess = 1;
 	
 	# ; まで Buf に溜め込む
 	
@@ -1879,34 +1717,6 @@ sub TabSpace {
 	my( $Width, $TabWidth ) = @_;
 	( $_, $Width, $TabWidth ) = @_;
 	$_ . "\t" x int(( $Width - length( $_ ) + $TabWidth - 1 ) / $TabWidth );
-}
-
-### set bus size #############################################################
-# syntax:
-#   $SetBusSize( <wire>, <wire|size> )
-
-sub SetBusSize {
-	local( $_ ) = @_;
-	my( $Wire );
-	
-	/($CSymbol)\s*,\s*([\w\d_]+)/;
-	my( $Name, $Bus ) = ( $1, $2 );
-	
-	if( $Bus =~ /$CSymbol/ ){
-		if( !defined( $Wire = $WireList{ $Bus } )){
-			Error( "SetBusWire: unknown signal: $Bus\n" );
-			$Bus = 1;
-		}else{
-			$Bus = $Wire->{ 'width' };
-		}
-	}
-	
-	if( !defined( $Wire = $WireList{ $Name } )){
-		Error( "SetBusWire: unknown signal: $Name\n" );
-	}else{
-		$Wire->{ 'width' } = $Bus;
-		$Wire->{ 'attr' } &= ~$ATTR_WEAK_W;
-	}
 }
 
 ### cpp directive # 0 "hogehoge" #############################################
