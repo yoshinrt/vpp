@@ -69,7 +69,7 @@ my $Debug	= 0;
 
 my $SEEK_SET = 0;
 
-my( $DefFile, $RTLFile, $ListFile, $CppFile, $VppFile );
+my( $DefFile, $RTLFile, $ListFile, $CppFile );
 my $PrintBuf;
 my $RTLBuf;
 my $PerlBuf;
@@ -134,7 +134,6 @@ sub main{
 	$RTLFile  = "$1_top$3" if( $RTLFile eq $DefFile );
 	$ListFile = "$1.list";
 	$CppFile  = "$1.cpp$3.$$";
-	$VppFile  = "$1.vpp$3.$$";
 	
 	unlink( $ListFile );
 	
@@ -151,7 +150,7 @@ sub main{
 	if( $Debug ){
 		print( "=== macro ===\n" );
 		foreach $_ ( sort keys %DefineTbl ){
-			printf( "$_%s\t$DefineTbl{ $_ }->[ 1 ]\n", $DefineTbl{ $_ }->[ 0 ] eq 's' ? '' : '()' );
+			printf( "$_%s\t$DefineTbl{ $_ }{ 'macro' }\n", $DefineTbl{ $_ }{ 'args' } eq 's' ? '' : '()' );
 		}
 		print( "=============\n" );
 	}
@@ -261,8 +260,8 @@ sub ExpandRepeatOutput {
 			
 			$_ = ExpandMacro( $_, $EXPAND_REP );
 			
-			# $DefineTbl{ $1 }->[ 0 ]:  >=0: 引数  <0: 可変引数  's': 単純マクロ
-			# $DefineTbl{ $1 }->[ 1 ]:  マクロ定義本体
+			# $DefineTbl{ $1 }{ 'args' }:  >=0: 引数  <0: 可変引数  's': 単純マクロ
+			# $DefineTbl{ $1 }{ 'macro' }:  マクロ定義本体
 			
 			if( /^ifdef\b(.*)/ ){
 				ExpandRepeatOutput( $BLKMODE_IF, !IfBlockEval( "defined $1" ));
@@ -352,7 +351,7 @@ sub ExpandRepeatOutput {
 					AddCppMacro( $Name, $Macro, $ArgNum );
 				}elsif( /^undef\s+($CSymbol)$/ ){
 					# undef
-					undef( $DefineTbl{ $1 } );
+					delete( $DefineTbl{ $1 } );
 				}elsif( /^include\s*"(.*?)"/ ){
 					Include( $1 );
 				}elsif( /^require\s+(.*)/ ){
@@ -1528,7 +1527,7 @@ sub RepeatOutput{
 	}
 	
 	my $PrevRepCnt;
-	$PrevRepCnt = $DefineTbl{ '__REP_CNT__' }->[ 1 ] if( defined( $DefineTbl{ '__REP_CNT__' } ));
+	$PrevRepCnt = $DefineTbl{ '__REP_CNT__' }{ 'macro' } if( defined( $DefineTbl{ '__REP_CNT__' } ));
 	
 	for(
 		$RepCnt = $RepCntSt;
@@ -1547,9 +1546,9 @@ sub RepeatOutput{
 	if( defined( $PrevRepCnt )){
 		AddCppMacro( '__REP_CNT__', $PrevRepCnt, undef, 1 );
 	}else{
-		undef( $DefineTbl{ '__REP_CNT__' } );
+		delete( $DefineTbl{ '__REP_CNT__' } );
 	}
-	undef( $DefineTbl{ $VarName } ) if( defined( $VarName ));
+	delete( $DefineTbl{ $VarName } ) if( defined( $VarName ));
 }
 
 sub IsNumber {
@@ -1742,12 +1741,12 @@ sub AddCppMacro {
 	if(
 		( !defined( $bNoCheck ) || !$bNoCheck ) &&
 		defined( $DefineTbl{ $Name } ) &&
-		( $DefineTbl{ $Name }->[ 0 ] ne $Args || $DefineTbl{ $Name }->[ 1 ] != $Macro )
+		( $DefineTbl{ $Name }{ 'args' } ne $Args || $DefineTbl{ $Name }{ 'macro' } != $Macro )
 	){
 		Warning( "redefined macro '$Name'" );
 	}
 	
-	$DefineTbl{ $Name } = [ $Args, $Macro ];
+	$DefineTbl{ $Name } = { 'args' => $Args, 'macro' => $Macro };
 }
 
 ### if ブロック用 eval #######################################################
@@ -1798,9 +1797,9 @@ sub ExpandMacro {
 				}elsif( !defined( $DefineTbl{ $Name } )){
 					# マクロではない
 					$Line .= $Name;
-				}elsif( $DefineTbl{ $Name }->[ 0 ] eq 's' ){
+				}elsif( $DefineTbl{ $Name }{ 'args' } eq 's' ){
 					# 単純マクロ
-					$Line .= $DefineTbl{ $Name }->[ 1 ];
+					$Line .= $DefineTbl{ $Name }{ 'macro' };
 					$bReplaced = 1;
 				}else{
 					# 関数マクロ
@@ -1845,24 +1844,24 @@ sub ExpandMacro {
 							
 							if( $ArgList eq '' ){
 								# 引数チェック
-								$ArgNum = $DefineTbl{ $Name }->[ 0 ];
+								$ArgNum = $DefineTbl{ $Name }{ 'args' };
 								$ArgNum = -$ArgNum - 1 if( $ArgNum < 0 );
 								
 								if( !(
-									$DefineTbl{ $Name }->[ 0 ] >= 0 ?
+									$DefineTbl{ $Name }{ 'args' } >= 0 ?
 										( $ArgNum == $#ArgList + 1 ) : ( $ArgNum <= $#ArgList + 1 )
 								)){
 									Error( "invalid number of macro arg: $Name" );
 									$Line .= $Name . '()';
 								}else{
 									# 仮引数を実引数に置換
-									$Line2 = $DefineTbl{ $Name }->[ 1 ];
+									$Line2 = $DefineTbl{ $Name }{ 'macro' };
 									for( $i = 0; $i < $ArgNum; ++$i ){
 										$Line2 =~ s/\b__\$ARG_${i}\$__\b/$ArgList[ $i ]/g;
 									}
 									
 									# 可変引数を置換
-									if( $DefineTbl{ $Name }->[ 0 ] < 0 ){
+									if( $DefineTbl{ $Name }{ 'args' } < 0 ){
 										if( $#ArgList + 1 <= $ArgNum ){
 											# 引数 0 個の時は，カンマもろとも消す
 											$Line2 =~ s/,?\s*(?:##)*\s*__VA_ARGS__\s*/ /g;
@@ -1911,7 +1910,7 @@ sub ExpandPrintfFmtSub {
 		Error( "repeat var not defined '$Name'" );
 		return( 'undef' );
 	}
-	return( sprintf( "%$Fmt", $DefineTbl{ $Name }->[ 1 ] ));
+	return( sprintf( "%$Fmt", $DefineTbl{ $Name }{ 'macro' } ));
 }
 
 ### sizeof / typeof ##########################################################
