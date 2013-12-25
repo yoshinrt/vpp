@@ -2,7 +2,7 @@
 
 ##############################################################################
 #
-#		vpp -- verilog preprocessor		Ver.2.00
+#		vpp -- verilog preprocessor		Ver.1.10
 #		Copyright(C) by DDS
 #
 ##############################################################################
@@ -17,7 +17,6 @@ use strict 'vars';
 use strict 'refs';
 
 my $enum = 1;
-
 my $ATTR_REF		= $enum;				# wire が参照された
 my $ATTR_FIX		= ( $enum <<= 1 );		# wire に出力された
 my $ATTR_BYDIR		= ( $enum <<= 1 );		# inout で接続された
@@ -29,7 +28,8 @@ my $ATTR_MD			= ( $enum <<= 1 );		# multiple drv ( 警告抑制 )
 my $ATTR_DEF		= ( $enum <<= 1 );		# ポート・信号定義済み
 my $ATTR_DC_WEAK_W	= ( $enum <<= 1 );		# Bus Size は弱めの申告警告を抑制
 my $ATTR_WEAK_W		= ( $enum <<= 1 );		# Bus Size は弱めの申告
-my $ATTR_NC			= 0xFFFFFFFF;
+my $ATTR_USED		= ( $enum <<= 1 );		# この template が使用された
+my $ATTR_NC			= ~0;
 
 $enum = 0;
 my $BLKMODE_NORMAL	= $enum++;	# ブロック外
@@ -42,6 +42,7 @@ $enum = 1;
 my $EXPAND_CPP		= $enum;		# CPP マクロ展開
 my $EXPAND_REP		= $enum <<= 1;	# repeat マクロ展開
 my $EXPAND_EVAL		= $enum <<= 1;	# $Eval 展開
+my $EXPAND_INTFUNC	= $enum <<= 1;	# sizeof, typeof 展開
 
 my $MODMODE_NORMAL	= 0;
 my $MODMODE_TEST	= 1 << 0;
@@ -77,6 +78,7 @@ my $ModuleName;
 my $ExpandTab;
 my $BlockNoOutput = 0;
 my $BlockRepeat = 0;
+my( $fpDef, $fpRTL );
 
 # 定義テーブル関係
 my @WireList;
@@ -87,6 +89,8 @@ my $PortList;
 my $PortDef;
 my %DefineTbl;
 my %EnumListWidth;
+
+my $FileBuf;
 
 main();
 exit( $ErrorCnt != 0 );
@@ -138,80 +142,52 @@ sub main{
 	unlink( $ListFile );
 	
 	# expand $repeat
-	if( !open( fpDef, "< $DefFile" )){
+	if( !open( $fpDef, "< $DefFile" )){
 		Error( "can't open file \"$DefFile\"" );
 		return;
 	}
 	
-	open( fpRTL, "> $CppFile" );
+	open( $fpRTL, "> $CppFile" );
 	
 	ExpandRepeatOutput();
 	
 	if( $Debug ){
 		print( "=== macro ===\n" );
 		foreach $_ ( sort keys %DefineTbl ){
-			printf( "$_%s\t$DefineTbl{ $_ }{ 'macro' }\n", $DefineTbl{ $_ }{ 'args' } eq 's' ? '' : '()' );
+			printf( "$_%s\t$DefineTbl{ $_ }{ macro }\n", $DefineTbl{ $_ }{ args } eq 's' ? '' : '()' );
 		}
 		print( "=============\n" );
 	}
 	undef( %DefineTbl );
 	
-	close( fpRTL );
-	close( fpDef );
+	close( $fpRTL );
+	close( $fpDef );
 	
 	system( "cp $CppFile stage1" ) if( $Debug );
 	
 	# vpp
-	if( !open( fpDef, "< $CppFile" )){
+	if( !open( $fpDef, "< $CppFile" )){
 		Error( "can't open file \"$CppFile\"" );
 		return;
 	}
 	
 	$ExpandTab ?
-		open( fpRTL, "| expand -$TabWidth > $RTLFile" ) :
-		open( fpRTL, "> $RTLFile" );
+		open( $fpRTL, "| expand -$TabWidth > $RTLFile" ) :
+		open( $fpRTL, "> $RTLFile" );
 	
 	MultiLineParser();
 	
-	close( fpRTL );
-	close( fpDef );
+	close( $fpRTL );
+	close( $fpDef );
 	
 	unlink( $CppFile );
-	
-	#unlink( $RTLFile ) if( $ErrorCnt );
 }
 
-### マルチラインパーザ #######################################################
+### 1行読む #################################################################
 
-sub MultiLineParser {
-	local( $_ );
-	my( $Line, $Word );
-	
-	while( <fpDef> ){
-		$_ = ExpandMacro( $_, $EXPAND_CPP | $EXPAND_EVAL );
-		( $Word, $Line ) = GetWord( $_ );
-		
-		if    ( /^#/					){ CppDirectiveLine( $_ );
-		}elsif( $Word eq 'module'		){ StartModule( $Line );
-		}elsif( $Word eq 'module_inc'	){ StartModule( $Line ); $iModuleMode = $MODMODE_INC;
-		}elsif( $Word eq 'endmodule'	){ EndModule( $_ );
-		}elsif( $Word eq 'instance'		){ DefineInst( $Line );
-		}elsif( $Word eq 'enum'			){ Enumerate( $Line );
-		}elsif( $Word eq '$wire'		){ DefineDefWireSkel( $Line );
-		}elsif( $Word eq '$header'		){ OutputHeader();
-		}elsif( $Word eq 'testmodule'	){ StartModule( $Line ); $iModuleMode = $MODMODE_TEST;
-		}elsif( $Word eq 'testmodule_inc'){StartModule( $Line ); $iModuleMode = $MODMODE_TESTINC;
-		}elsif( $Word eq '$AllInputs'	){ PrintAllInputs( $Line, $_ );
-		}elsif(
-			$Word eq '_module' ||
-			$Word eq '_endmodule'
-		){
-			$_ =~ s/\b_((?:end)?module)\b/$1/;
-			PrintRTL( $_ );
-		}else{
-			PrintRTL( $_ );
-		}
-	}
+sub ReadLine {
+	local $_ = <$fpDef>;
+	$_;
 }
 
 ### Start of the module #####################################################
@@ -231,7 +207,7 @@ sub ExpandRepeatOutput {
 	my $i;
 	my $BlockMode2;
 	
-	while( <fpDef> ){
+	while( $_ = ReadLine()){
 		# 過去表記の互換性
 		s/\$(repeat|perl)/#$1/g;
 		s/\$end\b/#endrep/g;
@@ -241,7 +217,7 @@ sub ExpandRepeatOutput {
 			
 			# \ で終わっている行を連結
 			while( /\\$/ ){
-				if( !( $Line = <fpDef> )){
+				if( !( $Line = ReadLine())){
 					last;
 				}
 				$_ .= $Line;
@@ -260,8 +236,8 @@ sub ExpandRepeatOutput {
 			
 			$_ = ExpandMacro( $_, $EXPAND_REP );
 			
-			# $DefineTbl{ $1 }{ 'args' }:  >=0: 引数  <0: 可変引数  's': 単純マクロ
-			# $DefineTbl{ $1 }{ 'macro' }:  マクロ定義本体
+			# $DefineTbl{ $1 }{ args }:  >=0: 引数  <0: 可変引数  's': 単純マクロ
+			# $DefineTbl{ $1 }{ macro }:  マクロ定義本体
 			
 			if( /^ifdef\b(.*)/ ){
 				ExpandRepeatOutput( $BLKMODE_IF, !IfBlockEval( "defined $1" ));
@@ -367,6 +343,39 @@ sub ExpandRepeatOutput {
 	$BlockRepeat	>>= 1;
 }
 
+### マルチラインパーザ #######################################################
+
+sub MultiLineParser {
+	local( $_ );
+	my( $Line, $Word );
+	
+	while( $_ = ReadLine()){
+		$_ = ExpandMacro( $_, $EXPAND_CPP | $EXPAND_INTFUNC );
+		( $Word, $Line ) = GetWord( $_ );
+		
+		if    ( /^#/					){ CppDirectiveLine( $_ );
+		}elsif( $Word eq 'module'		){ StartModule( $Line );
+		}elsif( $Word eq 'module_inc'	){ StartModule( $Line ); $iModuleMode = $MODMODE_INC;
+		}elsif( $Word eq 'endmodule'	){ EndModule( $_ );
+		}elsif( $Word eq 'instance'		){ DefineInst( $Line );
+		}elsif( $Word eq 'enum'			){ Enumerate( $Line );
+		}elsif( $Word eq '$wire'		){ DefineDefWireSkel( $Line );
+		}elsif( $Word eq '$header'		){ OutputHeader();
+		}elsif( $Word eq 'testmodule'	){ StartModule( $Line ); $iModuleMode = $MODMODE_TEST;
+		}elsif( $Word eq 'testmodule_inc'){StartModule( $Line ); $iModuleMode = $MODMODE_TESTINC;
+		}elsif( $Word eq '$AllInputs'	){ PrintAllInputs( $Line, $_ );
+		}elsif(
+			$Word eq '_module' ||
+			$Word eq '_endmodule'
+		){
+			$_ =~ s/\b_((?:end)?module)\b/$1/;
+			PrintRTL( $_ );
+		}else{
+			PrintRTL( $_ );
+		}
+	}
+}
+
 ### Start of the module #####################################################
 
 sub StartModule{
@@ -403,7 +412,7 @@ sub StartModule{
 		
 		my( $CLikePortDef ) = 0;
 		
-		while( <fpDef> ){
+		while( $_ = ReadLine()){
 			last if( /\s*\);/ );
 			next if( /^\s*\(\s*$/ || /^#/ );
 			
@@ -503,7 +512,7 @@ sub EndModule{
 			$Type = QueryWireType( $Wire, $bCLikePortDef ? 'd' : '' );
 			
 			if( $Type eq "input" || $Type eq "output" || $Type eq "inout" ){
-				$PortList .= "\t$Wire->{ 'name' },\n";
+				$PortList .= "\t$Wire->{ name },\n";
 			}
 		}
 		
@@ -531,21 +540,21 @@ sub EndModule{
 			
 			PrintRTL( TabSpace( $Type, $TabWidthType, $TabWidth ));
 			
-			if( $Wire->{ 'width' } eq "" ){
+			if( $Wire->{ width } eq "" ){
 				# bit 指定なし
 				PrintRTL( TabSpace( '', $TabWidthBit, $TabWidth ));
 			}else{
 				# 10:2 とか
-				PrintRTL( TabSpace( FormatBusWidth( $Wire->{ 'width' } ), $TabWidthBit, $TabWidth ));
+				PrintRTL( TabSpace( FormatBusWidth( $Wire->{ width } ), $TabWidthBit, $TabWidth ));
 			}
 			
-			PrintRTL( "$Wire->{ 'name' };\n" );
+			PrintRTL( "$Wire->{ name };\n" );
 		}
 	}
 	
 	# buf にためてきた記述をフラッシュ
 	
-	print( fpRTL $RTLBuf );
+	print( $fpRTL $RTLBuf );
 	$RTLBuf = "";
 	
 	# wire リストを出力 for debug
@@ -585,8 +594,10 @@ sub PrintRTL{
 	local( $_ ) = @_;
 	my( $tmp );
 	
-	# outreg / ioreg 処理
+	# //# コメント削除
+	s@\s*//#.*@@;
 	
+	# outreg / ioreg 処理
 	if( /\b(out|io)reg\b/ ){
 		$tmp = $_;
 		
@@ -597,14 +608,13 @@ sub PrintRTL{
 	}
 	
 	# Case / FullCase 処理
-	
 	s|\bC(asex?\s*\(.*\))|c$1 /* synopsys parallel_case */|g;
 	s|\bFullC(asex?\s*\(.*\))|c$1 /* synopsys parallel_case full_case */|g;
 	
 	if( defined( $PrintBuf )){
 		$$PrintBuf .= $_;
 	}else{
-		print( fpRTL $_ );
+		print( $fpRTL $_ );
 	}
 }
 
@@ -655,7 +665,6 @@ sub DefineInst{
 	my( $LineNo ) = $.;
 	
 	if( $Line !~ /\s+([\w\d]+)(\s+#\([^\)]+\))?\s+(\S+)\s+"?(\S+)"?\s*([\(;])/ ){
-#	if( $Line !~ /\s*,?\s*([\w\d]+)(\s+#\([^\)]+\))?\s*,?\s*(\S+)\s*,?\s*"?(\S+)"?\s*,?\s*([\(;])/ ){
 		Error( "syntax error (instance)" );
 		return;
 	}
@@ -814,10 +823,10 @@ sub DefineInst{
 
 sub GetModuleIO{
 	
+	local $_;
 	my( $ModuleName, $ModuleFile ) = @_;
 	my(
 		$Line,
-		$_,
 		$bFound
 	);
 	
@@ -884,7 +893,7 @@ sub GetModuleIO{
 	s/^\n//g;
 	s/\n$//g;
 	
-	#print( "$ModuleName--------\n$_\n" );
+	#print( "$ModuleName--------\n$_\n" ) if( $Debug );
 	return( split( /\n/, $_ ));
 }
 
@@ -1008,10 +1017,13 @@ sub OutputHeader{
 	my( $DateStr ) =
 		sprintf( "%d/%02d/%02d %02d:%02d:%02d", $year+1900, $mon+1, $mday, $hour, $min, $sec );
 	
-	print( fpRTL <<EOF );
+	local $_ = $DefFile;
+	s/\..*//g;
+	
+	print( $fpRTL <<EOF );
 /*****************************************************************************
 
-	$RTLFile -- \$BaseName module	generated by vpp.pl
+	$RTLFile -- $_ module	generated by vpp.pl
 	
 	Date     : $DateStr
 	Def file : $DefFile
@@ -1028,7 +1040,7 @@ sub SkipToSemiColon{
 	
 	do{
 		goto ExitLoop if( s/.*?;//g );
-	}while( <fpDef> );
+	}while( $_ = ReadLine());
 	
   ExitLoop:
 	return( $_ );
@@ -1038,22 +1050,21 @@ sub SkipToSemiColon{
 
 sub ReadSkelList{
 	
+	local $_;
 	my(
-		$Line,
 		$Port,
 		$Wire,
+		$Attr,
 		$AttrLetter
 	);
 	
-	my $Attr = 0;
-	my $Used = 0;
-	
-	while( $Line = <fpDef> ){
-		$Line =~ s/\/\/.*//g;
-		next if( $Line =~ /^\s*$/ );
-		last if( $Line =~ /^\s*\);/ );
+	while( $_ = ReadLine()){
+		s/\/\/.*//;
+		s/#.*//;
+		next if( /^\s*$/ );
+		last if( /^\s*\);/ );
 		
-		$Line =~ /^\s*(\S+)\s*(\S*)\s*(\S*)/;
+		/^\s*(\S+)\s*(\S*)\s*(\S*)/;
 		
 		( $Port, $Wire, $AttrLetter ) = ( $1, $2, $3 );
 		
@@ -1064,9 +1075,11 @@ sub ReadSkelList{
 		
 		# attr
 		
-		$Attr = $ATTR_MD		if( $AttrLetter =~ /M/ );
-		$Attr = $ATTR_DC_WEAK_W	if( $AttrLetter =~ /B/ );
-		$Used = 1				if( $AttrLetter =~ /U/ );
+		$Attr = 0;
+		
+		$Attr |= $ATTR_MD			if( $AttrLetter =~ /M/ );
+		$Attr |= $ATTR_DC_WEAK_W	if( $AttrLetter =~ /B/ );
+		$Attr |= $ATTR_USED			if( $AttrLetter =~ /U/ );
 		$Attr |=
 			( $AttrLetter =~ /NP$/ ) ? $ATTR_DEF	:
 			( $AttrLetter =~ /NC$/ ) ? $ATTR_NC		:
@@ -1080,7 +1093,6 @@ sub ReadSkelList{
 			'port'	=> $Port,
 			'wire'	=> $Wire,
 			'attr'	=> $Attr,
-			'used'	=> $Used
 		} );
 	}
 }
@@ -1095,8 +1107,8 @@ sub WarnUnusedSkelList{
 	my( $Skel );
 	
 	foreach $Skel ( @SkelList ){
-		if( !$Skel->{ 'used' } ){
-			Warning( "unused template ( $Skel->{ 'port' } --> $Skel->{ 'wire' } \@ $_ )", $LineNo );
+		if( !( $Skel->{ attr } && $ATTR_USED )){
+			Warning( "unused template ( $Skel->{ port } --> $Skel->{ wire } \@ $_ )", $LineNo );
 		}
 	}
 }
@@ -1123,16 +1135,16 @@ sub ConvPort2Wire{
 	foreach $Skel ( @SkelList ){
 		# bit幅が 0 なのに SkelWire に $n があったら，
 		# 強制的に hit させない
-		next if( $BitWidth == 0 && $Skel->{ 'wire' } =~ /\$n/ );
+		next if( $BitWidth == 0 && $Skel->{ wire } =~ /\$n/ );
 		
 		# Hit した
-		if( $Port =~ /^$Skel->{ 'port' }$/ ){
+		if( $Port =~ /^$Skel->{ port }$/ ){
 			# port tmpl 使用された
-			$Skel->{ 'used' } = 1;
+			$Skel->{ attr } |= $ATTR_USED;
 			
-			$SkelPort = $Skel->{ 'port' };
-			$SkelWire = $Skel->{ 'wire' };
-			$Attr	  = $Skel->{ 'attr' };
+			$SkelPort = $Skel->{ port };
+			$SkelWire = $Skel->{ wire };
+			$Attr	  = $Skel->{ attr };
 			
 			# NC ならリストを作らない
 			
@@ -1177,57 +1189,57 @@ sub RegisterWire{
 		# ATTR_WEAK_W が絡む場合の BitWidth を更新する
 		if(
 			!( $Attr			& $ATTR_WEAK_W ) &&
-			( $Wire->{ 'attr' }	& $ATTR_WEAK_W )
+			( $Wire->{ attr }	& $ATTR_WEAK_W )
 		){
 			# List が Weak で，新しいのが Hard なので代入
-			$Wire->{ 'width' } = $BitWidth;
+			$Wire->{ width } = $BitWidth;
 			
 			# list の ATTR_WEAK_W 属性を消す
-			$Wire->{ 'attr' } &= ~$ATTR_WEAK_W;
+			$Wire->{ attr } &= ~$ATTR_WEAK_W;
 			
 		}elsif(
 			( $Attr				& $ATTR_WEAK_W ) &&
-			( $Wire->{ 'attr' }	& $ATTR_WEAK_W ) &&
-			$Wire->{ 'width' } =~ /^\d/ && $BitWidth =~ /^\d/
+			( $Wire->{ attr }	& $ATTR_WEAK_W ) &&
+			$Wire->{ width } =~ /^\d/ && $BitWidth =~ /^\d/
 		){
 			# List，新しいの ともに Weak なので，大きいほうをとる
 			
-			( $MSB0, $LSB0 ) = GetBusWidth( $Wire->{ 'width' } );
+			( $MSB0, $LSB0 ) = GetBusWidth( $Wire->{ width } );
 			( $MSB1, $LSB1 ) = GetBusWidth( $BitWidth );
 			
 			$MSB0 = $MSB1 if( $MSB0 < $MSB1 );
 			$LSB0 = $LSB1 if( $LSB0 > $LSB1 );
 			
-			$Wire->{ 'width' } = $BitWidth = "$MSB0:$LSB0";
+			$Wire->{ width } = $BitWidth = "$MSB0:$LSB0";
 			
 		}elsif(
 			!( $Attr				& $ATTR_WEAK_W ) &&
-			!( $Wire->{ 'attr' }	& $ATTR_WEAK_W ) &&
-			$Wire->{ 'width' } =~ /^\d/ && $BitWidth =~ /^\d/
+			!( $Wire->{ attr }	& $ATTR_WEAK_W ) &&
+			$Wire->{ width } =~ /^\d/ && $BitWidth =~ /^\d/
 		){
 			# 両方 Hard なので，サイズが違っていれば size mismatch 警告
 			
-			if( GetBusWidth2( $Wire->{ 'width' } ) != GetBusWidth2( $BitWidth )){
-				Warning( "unmatch port width ( $ModuleName.$Name $BitWidth != $Wire->{ 'width' } )" );
+			if( GetBusWidth2( $Wire->{ width } ) != GetBusWidth2( $BitWidth )){
+				Warning( "unmatch port width ( $ModuleName.$Name $BitWidth != $Wire->{ width } )" );
 			}
 		}
 		
 		# 両方 inout 型なら，登録するほうを REF に変更
 		
-		if( $Wire->{ 'attr' } & $Attr & $ATTR_INOUT ){
+		if( $Wire->{ attr } & $Attr & $ATTR_INOUT ){
 			$Attr |= $ATTR_REF;
 		}
 		
 		# multiple driver 警告
 		
 		if(
-			( $Wire->{ 'attr' } & $Attr & $ATTR_FIX ) &&
+			( $Wire->{ attr } & $Attr & $ATTR_FIX ) &&
 			!( $Attr & $ATTR_MD )
 		){
 			Warning( "multiple driver ( wire : $Name )" );
 		}
 		
-		$Wire->{ 'attr' } |= ( $Attr & ~$ATTR_WEAK_W );
+		$Wire->{ attr } |= ( $Attr & ~$ATTR_WEAK_W );
 		
 	}else{
 		# 新規登録
@@ -1245,19 +1257,19 @@ sub RegisterWire{
 	# input か，instance で呼び出した module で output されている
 	if( $Attr & ( $ATTR_IN | $ATTR_INOUT | $ATTR_FIX )){
 		
-		if( defined( $Wire->{ 'drive' } )){
+		if( defined( $Wire->{ drive } )){
 			# すでに代入されているほうと，大きいほうを取る
 			( $MSB0, $LSB0 ) = GetBusWidth( $BitWidth );
-			( $MSB1, $LSB1 ) = GetBusWidth( $Wire->{ 'drive' } );
+			( $MSB1, $LSB1 ) = GetBusWidth( $Wire->{ drive } );
 			
 			$MSB0 = $MSB1 if( $MSB0 < $MSB1 );
 			$LSB0 = $LSB1 if( $LSB0 > $LSB1 );
 			
-			$Wire->{ 'drive' } = $BitWidth = "$MSB0:$LSB0";
+			$Wire->{ drive } = $BitWidth = "$MSB0:$LSB0";
 			
 		}else{
 			# 初ドライブなので，そのまま代入
-			$Wire->{ 'drive' } = $BitWidth;
+			$Wire->{ drive } = $BitWidth;
 		}
 	}
 }
@@ -1268,7 +1280,7 @@ sub RegisterWire{
 sub QueryWireType{
 	
 	my( $Wire, $Mode ) = @_;
-	my( $Attr ) = $Wire->{ 'attr' };
+	my( $Attr ) = $Wire->{ attr };
 	
 	return( ''		 ) if( $Attr & $ATTR_DEF  && $Mode eq 'd' );
 	return( 'input'	 ) if( $Attr & $ATTR_IN );
@@ -1302,7 +1314,7 @@ sub OutputWireList{
 	
 	foreach $Wire ( @WireList ){
 		
-		$Attr = $Wire->{ 'attr' };
+		$Attr = $Wire->{ attr };
 		$Type = QueryWireType( $Wire, "" );
 		
 		$Type =	( $Type eq "input" )	? "I" :
@@ -1327,16 +1339,16 @@ sub OutputWireList{
 			(( $Attr & $ATTR_BYDIR )	? "B" : "-" ) .
 			(( $Attr & $ATTR_FIX )		? "F" : "-" ) .
 			(( $Attr & $ATTR_REF )		? "R" : "-" ) .
-			"\t$Wire->{ 'width' }\t$Wire->{ 'name' }\n"
+			"\t$Wire->{ width }\t$Wire->{ name }\n"
 		));
 		
 		# bus width == 'X' error
-		Error( "Bus size is 'X' ( wire : $Wire->{ 'name' } )" )
-			if( $Wire->{ 'width' } eq 'X' );
+		Error( "Bus size is 'X' ( wire : $Wire->{ name } )" )
+			if( $Wire->{ width } eq 'X' );
 		
 		# bus width is weakly defined error
-		Warning( "Bus size is not fixed ( wire : $Wire->{ 'name' } )" )
-			if(( $Wire->{ 'attr' } & (
+		Warning( "Bus size is not fixed ( wire : $Wire->{ name } )" )
+			if(( $Wire->{ attr } & (
 				$ATTR_WEAK_W | $ATTR_DC_WEAK_W | $ATTR_DEF
 			)) == $ATTR_WEAK_W );
 	}
@@ -1368,13 +1380,13 @@ sub ExpandBus{
 	);
 	
 	foreach $Wire ( @WireList ){
-		if( $Wire->{ 'name' } =~ /\$n/ && $Wire->{ 'width' } ne "" ){
+		if( $Wire->{ name } =~ /\$n/ && $Wire->{ width } ne "" ){
 			
 			# 展開すべきバス
 			
-			$Name		= $Wire->{ 'name' };
-			$Attr		= $Wire->{ 'attr' };
-			$BitWidth	= $Wire->{ 'width' };
+			$Name		= $Wire->{ name };
+			$Attr		= $Wire->{ attr };
+			$BitWidth	= $Wire->{ width };
 			
 			# FR wire なら F とみなす
 			
@@ -1392,10 +1404,10 @@ sub ExpandBus{
 			
 			# List 情報の修正
 			
-			$Wire->{ 'attr' } |= ( $ATTR_REF | $ATTR_FIX );
+			$Wire->{ attr } |= ( $ATTR_REF | $ATTR_FIX );
 		}
 		
-		$Wire->{ 'name' } =~ s/\$n//g;
+		$Wire->{ name } =~ s/\$n//g;
 	}
 }
 
@@ -1467,7 +1479,7 @@ sub GetBusWidth2 {
 ### Format bus width #########################################################
 
 sub FormatBusWidth {
-	my( $_ ) = @_;
+	local( $_ ) = @_;
 	
 	if( /^\d+$/ ){
 		return "[$_:0]";
@@ -1488,7 +1500,7 @@ sub FormatBusWidth {
 
 sub RepeatOutput{
 	my( $BlockMode, $RepCntEd ) = @_;
-	my( $RewindPtr ) = tell( fpDef );
+	my( $RewindPtr ) = tell( $fpDef );
 	my( $LineCnt ) = $.;
 	my( $RepCnt );
 	my( $VarName );
@@ -1527,7 +1539,7 @@ sub RepeatOutput{
 	}
 	
 	my $PrevRepCnt;
-	$PrevRepCnt = $DefineTbl{ '__REP_CNT__' }{ 'macro' } if( defined( $DefineTbl{ '__REP_CNT__' } ));
+	$PrevRepCnt = $DefineTbl{ __REP_CNT__ }{ macro } if( defined( $DefineTbl{ __REP_CNT__ } ));
 	
 	for(
 		$RepCnt = $RepCntSt;
@@ -1537,7 +1549,7 @@ sub RepeatOutput{
 		AddCppMacro( '__REP_CNT__', $RepCnt, undef, 1 );
 		AddCppMacro( $VarName, $RepCnt, undef, 1 ) if( defined( $VarName ));
 		
-		seek( fpDef, $RewindPtr, $SEEK_SET );
+		seek( $fpDef, $RewindPtr, $SEEK_SET );
 		$. = $LineCnt;
 		PrintRTL( sprintf( "# %d \"$DefFile\"\n", $. + 1 ));
 		ExpandRepeatOutput( $BLKMODE_REPEAT );
@@ -1546,7 +1558,7 @@ sub RepeatOutput{
 	if( defined( $PrevRepCnt )){
 		AddCppMacro( '__REP_CNT__', $PrevRepCnt, undef, 1 );
 	}else{
-		delete( $DefineTbl{ '__REP_CNT__' } );
+		delete( $DefineTbl{ __REP_CNT__ } );
 	}
 	delete( $DefineTbl{ $VarName } ) if( defined( $VarName ));
 }
@@ -1610,7 +1622,7 @@ sub Enumerate{
 	# ; まで Buf に溜め込む
 	
 	if( $Line !~ /;/ ){
-		while( $Line = <fpDef> ){
+		while( $Line = ReadLine()){
 			$Buf .= $Line;
 			last if( $Line =~ /;/ );
 		}
@@ -1682,8 +1694,8 @@ sub PrintAllInputs {
 	$_		= ();
 	
 	foreach $Wire ( @WireList ){
-		if( $Wire->{ 'name' } =~ /^$Param$/ && QueryWireType( $Wire, '' ) eq 'input' ){
-			$_ .= $Tab . $Wire->{ 'name' } . ",\n";
+		if( $Wire->{ name } =~ /^$Param$/ && QueryWireType( $Wire, '' ) eq 'input' ){
+			$_ .= $Tab . $Wire->{ name } . ",\n";
 		}
 	}
 	
@@ -1741,7 +1753,7 @@ sub AddCppMacro {
 	if(
 		( !defined( $bNoCheck ) || !$bNoCheck ) &&
 		defined( $DefineTbl{ $Name } ) &&
-		( $DefineTbl{ $Name }{ 'args' } ne $Args || $DefineTbl{ $Name }{ 'macro' } != $Macro )
+		( $DefineTbl{ $Name }{ args } ne $Args || $DefineTbl{ $Name }{ macro } != $Macro )
 	){
 		Warning( "redefined macro '$Name'" );
 	}
@@ -1775,7 +1787,7 @@ sub ExpandMacro {
 	my $ArgNum;
 	my $i;
 	
-	$Mode = $EXPAND_CPP | $EXPAND_REP if( !defined( $Mode ));
+	$Mode = $EXPAND_CPP | $EXPAND_REP | $EXPAND_EVAL if( !defined( $Mode ));
 	
 	if( $BlockRepeat && $Mode & $EXPAND_REP ){
 		s/%(?:\{(.+?)\})?([+\-\d\.#]*[%cCdiouxXeEfgGnpsS])/ExpandPrintfFmtSub( $2, $1 )/ge;
@@ -1797,9 +1809,9 @@ sub ExpandMacro {
 				}elsif( !defined( $DefineTbl{ $Name } )){
 					# マクロではない
 					$Line .= $Name;
-				}elsif( $DefineTbl{ $Name }{ 'args' } eq 's' ){
+				}elsif( $DefineTbl{ $Name }{ args } eq 's' ){
 					# 単純マクロ
-					$Line .= $DefineTbl{ $Name }{ 'macro' };
+					$Line .= $DefineTbl{ $Name }{ macro };
 					$bReplaced = 1;
 				}else{
 					# 関数マクロ
@@ -1815,7 +1827,7 @@ sub ExpandMacro {
 							s#[\t ]*/\*.*?\*/[\t ]*# #gs;
 							s#[\t ]*//.*$##gm;
 							last if( /^$OpenClose/ );
-							if( !( $Line2 = <fpDef> )){
+							if( !( $Line2 = ReadLine())){
 								Error( "unmatched function macro ')': $Name" );
 								$Line .= $Name;
 								last;
@@ -1844,24 +1856,24 @@ sub ExpandMacro {
 							
 							if( $ArgList eq '' ){
 								# 引数チェック
-								$ArgNum = $DefineTbl{ $Name }{ 'args' };
+								$ArgNum = $DefineTbl{ $Name }{ args };
 								$ArgNum = -$ArgNum - 1 if( $ArgNum < 0 );
 								
 								if( !(
-									$DefineTbl{ $Name }{ 'args' } >= 0 ?
+									$DefineTbl{ $Name }{ args } >= 0 ?
 										( $ArgNum == $#ArgList + 1 ) : ( $ArgNum <= $#ArgList + 1 )
 								)){
 									Error( "invalid number of macro arg: $Name" );
 									$Line .= $Name . '()';
 								}else{
 									# 仮引数を実引数に置換
-									$Line2 = $DefineTbl{ $Name }{ 'macro' };
+									$Line2 = $DefineTbl{ $Name }{ macro };
 									for( $i = 0; $i < $ArgNum; ++$i ){
 										$Line2 =~ s/\b__\$ARG_${i}\$__\b/$ArgList[ $i ]/g;
 									}
 									
 									# 可変引数を置換
-									if( $DefineTbl{ $Name }{ 'args' } < 0 ){
+									if( $DefineTbl{ $Name }{ args } < 0 ){
 										if( $#ArgList + 1 <= $ArgNum ){
 											# 引数 0 個の時は，カンマもろとも消す
 											$Line2 =~ s/,?\s*(?:##)*\s*__VA_ARGS__\s*/ /g;
@@ -1884,18 +1896,20 @@ sub ExpandMacro {
 			$_ = $Line . $_;
 		}
 	}
+	$bReplaced |= s/\s*##\s*//g;
 	
 	if( $Mode & $EXPAND_EVAL ){
-		# sizeof 展開
-		s/\bsizeof($OpenClose)/SizeOf( $1 )/ge;
-		
-		# typeof 展開
-		s/\btypeof($OpenClose)/TypeOf( $1 )/ge;
-		
 		# Eval 展開
-		s/\$Eval($OpenClose)/Evaluate($1)/ge;
+		$bReplaced |= s/\$Eval($OpenClose)/Evaluate( $1 )/ge;
 	}
 	
+	if( $Mode & $EXPAND_INTFUNC ){
+		# sizeof 展開
+		$bReplaced |= s/\bsizeof($OpenClose)/SizeOf( $1 )/ge;
+		
+		# typeof 展開
+		$bReplaced |= s/\btypeof($OpenClose)/TypeOf( $1 )/ge;
+	}
 	$_;
 }
 
@@ -1910,7 +1924,7 @@ sub ExpandPrintfFmtSub {
 		Error( "repeat var not defined '$Name'" );
 		return( 'undef' );
 	}
-	return( sprintf( "%$Fmt", $DefineTbl{ $Name }{ 'macro' } ));
+	return( sprintf( "%$Fmt", $DefineTbl{ $Name }{ macro } ));
 }
 
 ### sizeof / typeof ##########################################################
@@ -1923,7 +1937,7 @@ sub SizeOf {
 	while( s/($CSymbol)// ){
 		if( !defined( $Wire = $WireList{ $1 } )){
 			Error( "undefined wire '$1'" );
-		}elsif( $Wire->{ 'width' } =~ /(\d+):(\d+)/ ){
+		}elsif( $Wire->{ width } =~ /(\d+):(\d+)/ ){
 			$Bits += ( $1 - $2 + 1 );
 		}else{
 			++$Bits;
@@ -1942,7 +1956,7 @@ sub TypeOf {
 		Error( "undefined wire '$1'" );
 		$_ = '';
 	}else{
-		$_ = $_->{ 'width' } eq '' ? '' : "[$_->{ 'width' }]";
+		$_ = $_->{ width } eq '' ? '' : "[$_->{ width }]";
 	}
 	$_;
 }
@@ -1952,13 +1966,13 @@ sub TypeOf {
 sub Include {
 	local( $_ ) = @_;
 	
-	my $RewindPtr	= tell( fpDef );
+	my $RewindPtr	= tell( $fpDef );
 	my $LineCnt		= $.;
 	my $PrevDefFile	= $DefFile;
 	
-	close( fpDef );
+	close( $fpDef );
 	
-	if( !open( fpDef, "< $_" )){
+	if( !open( $fpDef, "< $_" )){
 		Error( "can't open include file '$_'" );
 	}else{
 		$DefFile = $_;
@@ -1968,9 +1982,9 @@ sub Include {
 		print( "back to file '$PrevDefFile'...\n" ) if( $Debug );
 	}
 	$DefFile = $PrevDefFile;
-	open( fpDef, "< $DefFile" );
+	open( $fpDef, "< $DefFile" );
 	
-	seek( fpDef, $RewindPtr, $SEEK_SET );
+	seek( $fpDef, $RewindPtr, $SEEK_SET );
 	$. = $LineCnt;
 	PrintRTL( sprintf( "# %d \"$DefFile\"\n", $. + 1 ));
 }
