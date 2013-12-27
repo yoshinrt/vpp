@@ -90,7 +90,7 @@ my $PortDef;
 my %DefineTbl;
 my %EnumListWidth;
 
-my $FileBuf;
+my( @CommentPool );
 
 main();
 exit( $ErrorCnt != 0 );
@@ -156,6 +156,8 @@ sub main{
 		foreach $_ ( sort keys %DefineTbl ){
 			printf( "$_%s\t$DefineTbl{ $_ }{ macro }\n", $DefineTbl{ $_ }{ args } eq 's' ? '' : '()' );
 		}
+		print( "=== comment =\n" );
+		print( join( "\n", @CommentPool ));
 		print( "=============\n" );
 	}
 	undef( %DefineTbl );
@@ -187,6 +189,29 @@ sub main{
 
 sub ReadLine {
 	local $_ = <$fpDef>;
+	
+	my( $Cnt );
+	my( $Line );
+	
+	while( m#(//|/\*|(?<!\\)")# ){
+		$Cnt = $#CommentPool + 1;
+		
+		if( $1 eq '//' ){
+			push( @CommentPool, $1 ) if( s#(//.*)#*__COMMENT_${Cnt}__*# );
+		}elsif( $1 eq '"' ){
+			push( @CommentPool, $1 ) if( s/((?<!\\)".*?(?<!\\)")/*__STRING_${Cnt}__*/ );
+		}else{
+			if( s#(/\*.*?\*/)#*__COMMENT_${Cnt}__*#s ){
+				# /* ... */ の組が発見されたら，置換
+				push( @CommentPool, $1 );
+				last;
+			}
+			# /* ... */ の組が発見されないので，発見されるまで行 cat
+			last if( !( $Line = <$fpDef> ));
+			$_ .= $Line;
+		}
+	}
+	
 	$_;
 }
 
@@ -226,8 +251,7 @@ sub ExpandRepeatOutput {
 			PrintRTL( sprintf( "# %d \"$DefFile\"\n", $. + 1 ));
 			
 			# コメント類削除
-			s#[\t ]*/\*.*?\*/[\t ]*# #gs;
-			s#[\t ]*//.*$##gm;
+			s/\*__COMMENT_\d+__\*//g;
 			
 			# \ 削除
 			s/[\t ]*\\[\x0D\x0A]+[\t ]*/ /g;
@@ -328,7 +352,7 @@ sub ExpandRepeatOutput {
 				}elsif( /^undef\s+($CSymbol)$/ ){
 					# undef
 					delete( $DefineTbl{ $1 } );
-				}elsif( /^include\s*"(.*?)"/ ){
+				}elsif( /^include\s*(.*)/ ){
 					Include( $1 );
 				}elsif( /^require\s+(.*)/ ){
 					Require( $1 );
@@ -415,6 +439,8 @@ sub StartModule{
 		while( $_ = ReadLine()){
 			last if( /\s*\);/ );
 			next if( /^\s*\(\s*$/ || /^#/ );
+			
+			$_ = ExpandMacro( $_ );
 			
 			$CLikePortDef |= /^\s*(?:wire|reg|input|output|outreg|inout|ioreg)\b/;
 			
@@ -1896,7 +1922,13 @@ sub ExpandMacro {
 			$_ = $Line . $_;
 		}
 	}
-	$bReplaced |= s/\s*##\s*//g;
+	
+	if( $Mode & $EXPAND_CPP ){
+		$bReplaced |= s/\s*##\s*//g;
+		
+		# コメント，文字列定数復活
+		s/\*__(?:COMMENT|STRING)_(\d+)__\*/$CommentPool[ $1 ]/g;
+	}
 	
 	if( $Mode & $EXPAND_EVAL ){
 		# Eval 展開
@@ -1965,6 +1997,9 @@ sub TypeOf {
 
 sub Include {
 	local( $_ ) = @_;
+	
+	$_ = ExpandMacro( $_ );
+	$_ = $1 if( /"(.*?)"/ );
 	
 	my $RewindPtr	= tell( $fpDef );
 	my $LineCnt		= $.;
