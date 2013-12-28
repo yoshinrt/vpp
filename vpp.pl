@@ -1853,10 +1853,8 @@ sub ExpandMacro {
 				$Line .= $`;
 				( $Name, $_ ) = ( $1, $2 );
 				
-				if( $Name eq '__FILE__' ){
-					$Line .= $DefFile;
-				}elsif( $Name eq '__LINE__' ){
-					$Line .= $.;
+				if( $Name eq '__FILE__' ){		$Line .= $DefFile;
+				}elsif( $Name eq '__LINE__' ){	$Line .= $.;
 				}elsif( !defined( $DefineTbl{ $Name } )){
 					# マクロではない
 					$Line .= $Name;
@@ -1962,15 +1960,15 @@ sub ExpandMacro {
 	
 	if( $Mode & $EXPAND_EVAL ){
 		# Eval 展開
-		$bReplaced |= s/\$Eval($OpenClose)/Evaluate( $1 )/ge;
+		s/\$Eval($OpenClose)/Evaluate( $1 )/ge;
 	}
 	
 	if( $Mode & $EXPAND_INTFUNC ){
 		# sizeof 展開
-		$bReplaced |= s/\bsizeof($OpenClose)/SizeOf( $1 )/ge;
+		s/\bsizeof($OpenClose)/SizeOf( $1 )/ge;
 		
 		# typeof 展開
-		$bReplaced |= s/\btypeof($OpenClose)/TypeOf( $1 )/ge;
+		s/\btypeof($OpenClose)/TypeOf( $1 )/ge;
 	}
 	$_;
 }
