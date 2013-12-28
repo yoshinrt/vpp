@@ -91,7 +91,6 @@ my @SkelList;
 my $iModuleMode;
 my $PortDef;
 my %DefineTbl;
-my %EnumListWidth;
 
 my( @CommentPool );
 
@@ -206,6 +205,7 @@ sub ReadLine {
 	
 	my( $Cnt );
 	my( $Line );
+	my( $LineCnt ) = $.;
 	
 	while( m#(//|/\*|(?<!\\)")# ){
 		$Cnt = $#CommentPool + 1;
@@ -227,7 +227,7 @@ sub ReadLine {
 			}
 			# /* ... */ の組が発見されないので，発見されるまで行 cat
 			if( !( $Line = ReadLineSub( $_[ 0 ] ))){
-				Error( 'unterminated */' );
+				Error( 'unterminated */', $LineCnt );
 				last;
 			}
 			$_ .= $Line;
@@ -268,14 +268,16 @@ sub ExpandRepeatOutput {
 	my $Line;
 	my $i;
 	my $BlockMode2;
+	my $LineCnt = $.;
 	
 	while( $_ = ReadLine( $fpDef )){
 		# 過去表記の互換性
 		s/\$(repeat|perl)/#$1/g;
 		s/\$end\b/#endrep/g;
 		s/\bEOF\b/#endperl/g;
+		s/\benum\b/#enum/g;
 		
-		if( /^\s*#\s*(?:if|ifdef|ifndef|elif|else|endif|define|undef|include|require|repeat|endrep|perl|endperl)\b/	){
+		if( /^\s*#\s*[a-z]+\b/	){
 			
 			# \ で終わっている行を連結
 			while( /\\$/ ){
@@ -358,6 +360,8 @@ sub ExpandRepeatOutput {
 				}else{
 					last;
 				}
+			}elsif( /^enum\b(.*)/ ){
+				Enumerate( $1 );
 			}elsif( !$BlockNoOutput ){
 				if( /^define\s+($CSymbol)$/ ){
 					# 名前だけ定義
@@ -393,10 +397,20 @@ sub ExpandRepeatOutput {
 					Include( $1 );
 				}elsif( /^require\s+(.*)/ ){
 					Require( $1 );
+				}elsif( !$BlockNoOutput ){
+					PrintRTL( ExpandMacro( $_ ));
 				}
 			}
 		}elsif( !$BlockNoOutput ){
 			PrintRTL( ExpandMacro( $_ ));
+		}
+	}
+	
+	if( $_ eq '' && $BlockMode != $BLKMODE_NORMAL ){
+		if(     $BlockMode == $BLKMODE_REPEAT	){ Error( "unterminated #repeat",	$LineCnt );
+		}elsif( $BlockMode == $BLKMODE_PERL		){ Error( "unterminated #perl",		$LineCnt );
+		}elsif( $BlockMode == $BLKMODE_IF		){ Error( "unterminated #if",		$LineCnt );
+		}elsif( $BlockMode == $BLKMODE_ELSE		){ Error( "unterminated #else",		$LineCnt );
 		}
 	}
 	
@@ -416,13 +430,12 @@ sub MultiLineParser {
 		
 		if    ( $Word eq 'module'			){ StartModule( $Line );
 		}elsif( $Word eq 'module_inc'		){ StartModule( $Line, $MODMODE_INC );
-		}elsif( $Word eq 'endmodule'		){ EndModule( $_ );
-		}elsif( $Word eq 'instance'			){ DefineInst( $Line );
-		}elsif( $Word eq 'enum'				){ Enumerate( $Line );
-		}elsif( $Word eq '$wire'			){ DefineDefWireSkel( $Line );
-		}elsif( $Word eq '$header'			){ OutputHeader();
 		}elsif( $Word eq 'testmodule'		){ StartModule( $Line, $MODMODE_TEST );
 		}elsif( $Word eq 'testmodule_inc'	){ StartModule( $Line, $MODMODE_TESTINC );
+		}elsif( $Word eq 'endmodule'		){ EndModule( $_ );
+		}elsif( $Word eq 'instance'			){ DefineInst( $Line );
+		}elsif( $Word eq '$wire'			){ DefineDefWireSkel( $Line );
+		}elsif( $Word eq '$header'			){ OutputHeader();
 		}elsif( $Word eq '$AllInputs'		){ PrintAllInputs( $Line, $_ );
 		}elsif(
 			$Word eq '_module' ||
@@ -982,12 +995,6 @@ sub DeleteExceptPort{
 		# typeof()は，不明バス幅にする (^^;
 		elsif( /typeof\s*\([^\)]+\)/ ){
 			$Width = '?';
-			$_ = $';
-		}
-		
-		# enum されたものか?
-		elsif( /^\s*($CSymbol)/ && defined( $EnumListWidth{ $1 } )){
-			$Width = $EnumListWidth{ $1 };
 			$_ = $';
 		}
 		
@@ -1728,9 +1735,6 @@ sub Enumerate{
 		AddCppMacro( $TypeName, "[$i:0]" );
 		AddCppMacro( "${TypeName}_w", $BitWidth );
 	}
-	
-	# enum type list に登録
-	$EnumListWidth{ $TypeName } = $i;
 	
 	# enum list の define 出力
 	for( $i = 0; $i <= $#EnumList; ++$i ){
