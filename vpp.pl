@@ -40,10 +40,12 @@ my $BLKMODE_IF		= $enum++;	# if ブロック
 my $BLKMODE_ELSE	= $enum++;	# else ブロック
 
 $enum = 1;
-my $EXPAND_CPP		= $enum;		# CPP マクロ展開
-my $EXPAND_REP		= $enum <<= 1;	# repeat マクロ展開
-my $EXPAND_EVAL		= $enum <<= 1;	# $Eval 展開
-my $EXPAND_INTFUNC	= $enum <<= 1;	# sizeof, typeof 展開
+my $EX_CPP			= $enum;		# CPP マクロ展開
+my $EX_REP			= $enum <<= 1;	# repeat マクロ展開
+my $EX_INTFUNC		= $enum <<= 1;	# sizeof, typeof 展開
+my $EX_STR			= $enum <<= 1;	# 文字列リテラル
+my $EX_COMMENT		= $enum <<= 1;	# コメント
+my $EX_RMCOMMENT	= $enum <<= 1;	# コメント削除
 
 $enum = 1;
 my $MODMODE_NONE	= 0;
@@ -53,6 +55,7 @@ my $MODMODE_INC		= $enum <<= 1;
 my $MODMODE_TESTINC	= $MODMODE_TEST | $MODMODE_INC;
 
 my $CSymbol			= qr/\b[_a-zA-Z]\w*\b/;
+my $CSymbol2		= qr/\b[_a-zA-Z\$]\w*\b/;
 my $SigTypeDef		= qr/\b(?:parameter|wire|reg|input|output(?:\s+reg)?|inout)\b/;
 my $DefSkelPort		= "(.*)";
 my $DefSkelWire		= "\$1";
@@ -80,9 +83,11 @@ my $RTLBuf;
 my $PerlBuf;
 my $ModuleName;
 my $ExpandTab;
-my $BlockNoOutput = 0;
-my $BlockRepeat = 0;
+my $BlockNoOutput	= 0;
+my $BlockRepeat		= 0;
 my( $fpDef, $fpRTL );
+
+my $ResetLinePos	= 0;
 
 # 定義テーブル関係
 my @WireList;
@@ -179,8 +184,6 @@ sub main{
 	system( "cp $CppFile stage1" ) if( $Debug );
 	
 	# vpp
-	undef( @CommentPool );
-	
 	if( !open( $fpDef, "< $CppFile" )){
 		Error( "can't open file \"$CppFile\"" );
 		return;
@@ -211,18 +214,19 @@ sub ReadLine {
 		$Cnt = $#CommentPool + 1;
 		
 		if( $1 eq '//' ){
-			push( @CommentPool, $1 ) if( s#(//.*)#*__COMMENT_${Cnt}__*# );
+			push( @CommentPool, $1 ) if( s#(//.*)#<__COMMENT_${Cnt}__># );
 		}elsif( $1 eq '"' ){
-			if( s/((?<!\\)".*?(?<!\\)")/*__STRING_${Cnt}__*/ ){
+			if( s/((?<!\\)".*?(?<!\\)")/<__STRING_${Cnt}__>/ ){
 				push( @CommentPool, $1 );
 			}else{
 				Error( 'unterminated "' );
 				s/"//;
 			}
 		}else{
-			if( s#(/\*.*?\*/)#*__COMMENT_${Cnt}__*#s ){
+			if( s#(/\*.*?\*/)#<__COMMENT_${Cnt}__>#s ){
 				# /* ... */ の組が発見されたら，置換
 				push( @CommentPool, $1 );
+				$ResetLinePos = $.;
 				last;
 			}
 			# /* ... */ の組が発見されないので，発見されるまで行 cat
@@ -287,17 +291,14 @@ sub ExpandRepeatOutput {
 				$_ .= $Line;
 			}
 			
-			PrintCurrentLine();
-			
-			# コメント類削除
-			s/\*__COMMENT_\d+__\*//g;
+			$ResetLinePos = $.;
 			
 			# \ 削除
 			s/[\t ]*\\[\x0D\x0A]+[\t ]*/ /g;
 			s/\s+$//g;
 			s/^\s*#\s*//;
 			
-			$_ = ExpandMacro( $_, $EXPAND_REP );
+			$_ = ExpandMacro( $_, $EX_REP | $EX_RMCOMMENT );
 			
 			# $DefineTbl{ $1 }{ args }:  >=0: 引数  <0: 可変引数  's': 単純マクロ
 			# $DefineTbl{ $1 }{ macro }:  マクロ定義本体
@@ -344,7 +345,7 @@ sub ExpandRepeatOutput {
 				}
 			}elsif( /^repeat\s*($OpenClose)/ ){
 				# repeat / endrepeat
-				RepeatOutput( $BlockMode, ExpandMacro( $1 ));
+				RepeatOutput( $BlockMode, $1 );
 			}elsif( /^endrep\b/ ){
 				if( $BlockMode != $BLKMODE_REPEAT ){
 					Error( "unexpected #endrep" );
@@ -386,7 +387,7 @@ sub ExpandRepeatOutput {
 							$ArgNum = -$ArgNum;
 							last;
 						}
-						$Macro =~ s/\b$ArgList[ $i ]\b/*__\ARG_${i}\__*/g;
+						$Macro =~ s/\b$ArgList[ $i ]\b/<__\ARG_${i}\__>/g;
 					}
 					
 					AddCppMacro( $Name, $Macro, $ArgNum );
@@ -398,11 +399,11 @@ sub ExpandRepeatOutput {
 				}elsif( /^require\s+(.*)/ ){
 					Require( $1 );
 				}elsif( !$BlockNoOutput ){
-					PrintRTL( ExpandMacro( $_ ));
+					PrintRTL( ExpandMacro( $_, $EX_CPP | $EX_REP | $EX_STR | $EX_COMMENT ));
 				}
 			}
 		}elsif( !$BlockNoOutput ){
-			PrintRTL( ExpandMacro( $_ ));
+			PrintRTL( ExpandMacro( $_, $EX_CPP | $EX_REP | $EX_STR | $EX_COMMENT ));
 		}
 	}
 	
@@ -425,7 +426,7 @@ sub MultiLineParser {
 	my( $Line, $Word );
 	
 	while( $_ = ReadLine( $fpDef )){
-		$_ = ExpandMacro( $_, $EXPAND_CPP | $EXPAND_INTFUNC );
+		$_ = ExpandMacro( $_, $EX_INTFUNC | $EX_STR | $EX_COMMENT );
 		( $Word, $Line ) = GetWord( $_ );
 		
 		if    ( $Word eq 'module'			){ StartModule( $Line );
@@ -674,14 +675,24 @@ sub PrintRTL{
 	my( $tmp );
 	
 	# //# コメント削除
-	if( m@^\s*//#@ ){
-		$_ = sprintf( "# %d \"$DefFile\"\n", $. + 1 );
+	if( s@^\s//#.*?\n@@gs ){
+		$ResetLinePos = $.;
 	}
+	
 	s@\s*//#.*@@;
 	
 	# Case / FullCase 処理
 	s|\bC(asex?\s*\(.*\))|c$1 /* synopsys parallel_case */|g;
 	s|\bFullC(asex?\s*\(.*\))|c$1 /* synopsys parallel_case full_case */|g;
+	
+	if( $ResetLinePos ){
+		if( $ResetLinePos == $. ){
+			$_ .= sprintf( "# %d \"$DefFile\"\n", $. );
+		}else{
+			$_ = sprintf( "# %d \"$DefFile\"\n", $. ) . $_;
+		}
+		$ResetLinePos = 0;
+	}
 	
 	if( defined( $PrintBuf )){
 		$$PrintBuf .= $_;
@@ -932,7 +943,7 @@ sub GetModuleIO{
 	
 	# delete comment
 	
-	s/\*__(?:COMMENT|STRING)_\d+__\*//g;
+	s/<__(?:COMMENT|STRING)_\d+__>//g;
 	s/#.*//g;
 	s/\btask\b.*?\bendtask\b//gs;
 	s/\bfunction\b.*?\bendfunction\b//gs;
@@ -1019,19 +1030,6 @@ sub DeleteExceptPort{
 	return( $_ );
 }
 
-### optimize line ( remove blank, etc... ) ###################################
-
-sub OptimizeLine{
-	local( $_ ) = @_;
-	
-	s/[\t ]+/ /g;
-	s/\/\/.*//g;
-	s/^ +//g;
-	s/ +$//g;
-	
-	/^([\w\d\$]+)/;
-	return( $_, $1 );
-}
 ### get word #################################################################
 
 sub GetWord{
@@ -1571,6 +1569,8 @@ sub RepeatOutput{
 	
 	my( $RepCntSt, $Step );
 	
+	$RepCntEd = ExpandMacro( $RepCntEd, $EX_CPP | $EX_STR );
+	
 	# VarName を識別
 	if( $RepCntEd =~ /\s*\(\s*(\w+)\s*:/ ){
 		$VarName = $1;
@@ -1615,7 +1615,6 @@ sub RepeatOutput{
 		
 		seek( $fpDef, $RewindPtr, $SEEK_SET );
 		$. = $LineCnt;
-		PrintCurrentLine();
 		ExpandRepeatOutput( $BLKMODE_REPEAT );
 	}
 	
@@ -1665,7 +1664,9 @@ sub ExecPerl {
 		print( "\n===================================\n" );
 	}
 	
-	PrintCurrentLine();
+	$_ .= "\n" if( $_ ne '' && !/\n$/ );
+	PrintRTL( $_ );
+	$ResetLinePos = $.;
 }
 
 ### enum state ###############################################################
@@ -1694,7 +1695,7 @@ sub Enumerate{
 	}
 	
 	# delete comment
-	s/\*__COMMENT_\d+__\*//g;
+	s/<__COMMENT_\d+__>//g;
 	
 	# delete \n
 	
@@ -1819,7 +1820,7 @@ sub IfBlockEval {
 	
 	# defined 置換
 	s/\bdefined\s+($CSymbol)/defined( $DefineTbl{ $1 } ) ? 1 : 0/ge;
-	return Evaluate( ExpandMacro( $_ ));
+	return Evaluate( ExpandMacro( $_, $EX_CPP | $EX_STR ));
 }
 
 ### CPP マクロ展開 ###########################################################
@@ -1837,14 +1838,14 @@ sub ExpandMacro {
 	my $ArgNum;
 	my $i;
 	
-	$Mode = $EXPAND_CPP | $EXPAND_REP | $EXPAND_EVAL if( !defined( $Mode ));
+	$Mode = $EX_CPP | $EX_REP if( !defined( $Mode ));
 	
-	if( $BlockRepeat && $Mode & $EXPAND_REP ){
+	if( $BlockRepeat && $Mode & $EX_REP ){
 		s/%(?:\{(.+?)\})?([+\-\d\.#]*[%cCdiouxXeEfgGnpsS])/ExpandPrintfFmtSub( $2, $1 )/ge;
 	}
 	
 	my $bReplaced = 1;
-	if( $Mode & $EXPAND_CPP ){
+	if( $Mode & $EX_CPP ){
 		while( $bReplaced ){
 			$bReplaced = 0;
 			$Line = '';
@@ -1874,6 +1875,7 @@ sub ExpandMacro {
 						# マクロ引数取得
 						while( 1 ){
 							last if( /^$OpenClose/ );
+							$ResetLinePos = $.;
 							if( !( $Line2 = ReadLine( $fpDef ))){
 								Error( "unmatched function macro ')': $Name" );
 								$Line .= $Name;
@@ -1885,7 +1887,7 @@ sub ExpandMacro {
 						# マクロ引数解析
 						if( /^($OpenClose)(.*)/s ){
 							( $ArgList, $_ ) = ( $1, $2 );
-							$ArgList =~ s/\*__COMMENT_\d+__\*//g;
+							$ArgList =~ s/<__COMMENT_\d+__>//g;
 							$ArgList =~ s/[\t ]*[\x0D\x0A]+[\t ]*/ /g;
 							$ArgList =~ s/^\(\s*//;
 							$ArgList =~ s/\s*\)$//;
@@ -1916,7 +1918,7 @@ sub ExpandMacro {
 								}else{
 									# 仮引数を実引数に置換
 									$Line2 = $DefineTbl{ $Name }{ macro };
-									$Line2 =~ s/\*__ARG_(\d+)__\*/$ArgList[ $1 ]/g;
+									$Line2 =~ s/<__ARG_(\d+)__>/$ArgList[ $1 ]/g;
 									
 									# 可変引数を置換
 									if( $DefineTbl{ $Name }{ args } < 0 ){
@@ -1944,32 +1946,39 @@ sub ExpandMacro {
 		
 		# トークン連結演算子 ##
 		$bReplaced |= s/\s*##\s*//g;
-		
+	}
+	
+	if( $Mode & $EX_STR ){
 		# 文字列化
 		s/\$String($OpenClose)/Stringlize( $1 )/ge;
 		
-		# 文字列リテラル連結前処理
-		1 while( s/(\*__STRING_\d+__\*)\s*(\*__STRING_\d+__\*)/$1*__STRING_CONCAT__*$2/g );
-		
-		# コメント，文字列定数復活
-		s/\*__(?:COMMENT|STRING)_(\d+)__\*/$CommentPool[ $1 ]/g;
+		# 文字列定数復活
+		s/<__STRING_(\d+)__>/$CommentPool[ $1 ]/g;
 		
 		# 文字列リテラル連結
-		s/"\*__STRING_CONCAT__\*//g;
+		1 while( s/((?<!\\)".*?)(?<!\\)"\s*"(.*?(?<!\\)")/$1$2/g );
 	}
 	
-	if( $Mode & $EXPAND_EVAL ){
-		# Eval 展開
-		s/\$Eval($OpenClose)/Evaluate( $1 )/ge;
-	}
-	
-	if( $Mode & $EXPAND_INTFUNC ){
+	if( $Mode & $EX_INTFUNC ){
 		# sizeof 展開
 		s/\bsizeof($OpenClose)/SizeOf( $1 )/ge;
 		
 		# typeof 展開
 		s/\btypeof($OpenClose)/TypeOf( $1 )/ge;
 	}
+	
+	if( $Mode & $EX_CPP ){
+		# Eval 展開	★暫定
+		s/\$Eval($OpenClose)/Evaluate( $1 )/ge;
+	}
+	
+	# コメント
+	if( $Mode & $EX_RMCOMMENT ){
+		s/<__COMMENT_(\d+)__>/ /g;
+	}elsif( $Mode & $EX_COMMENT ){
+		s/<__COMMENT_(\d+)__>/$CommentPool[ $1 ]/g;
+	}
+	
 	$_;
 }
 
@@ -2035,7 +2044,7 @@ sub Stringlize {
 sub Include {
 	local( $_ ) = @_;
 	
-	$_ = ExpandMacro( $_ );
+	$_ = ExpandMacro( $_, $EX_CPP | $EX_STR );
 	$_ = $1 if( /"(.*?)"/ );
 	
 	my $RewindPtr	= tell( $fpDef );
@@ -2058,14 +2067,10 @@ sub Include {
 	
 	seek( $fpDef, $RewindPtr, $SEEK_SET );
 	$. = $LineCnt;
-	PrintCurrentLine();
+	$ResetLinePos = $.;
 }
 
-### 現在ファイル・行ディレクティブ ###########################################
-
-sub PrintCurrentLine {
-	PrintRTL( sprintf( "# %d \"$DefFile\"\n", $. + 1 ));
-}
+##############################################################################
 
 __DATA__
 #define BUSTYPE( w )	[$Eval( w - 1 ):0]
