@@ -960,22 +960,21 @@ sub GetModuleIO{
 	s/^\s*`.*//g;
 	
 	# delete \n
-	s/\[\x0D\x0A\t ]+/ /g;
+	s/[\x0D\x0A\t ]+/ /g;
 	
 	# split
 	#print if( $Debug );
 	s/\boutreg\b/output reg/g;
 	s/($SigTypeDef)/\n$1/g;
-	s/;//g;
-	s/ *\n */\n/g;
+	s/ *;.*//g;
 	
 	# port 以外を削除
 	s/(.*)/DeleteExceptPort($1)/ge;
-	s/\s*\n+/\n/g;
+	s/ *\n+/\n/g;
 	s/^\n//g;
 	s/\n$//g;
-	
 	#print( "$ModuleName--------\n$_\n" ); # if( $Debug );
+	
 	return( split( /\n/, $_ ));
 }
 
