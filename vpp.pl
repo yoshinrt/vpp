@@ -148,8 +148,6 @@ sub main{
 	$ListFile = "$1.list";
 	$CppFile  = "$1.cpp$3.$$";
 	
-	unlink( $ListFile );
-	
 	# デフォルトマクロリード
 	$fpIn		= DATA;
 	$PrintBuf	= \$RTLBuf;
@@ -191,6 +189,8 @@ sub main{
 		return;
 	}
 	
+	unlink( $ListFile );
+	
 	$ExpandTab ?
 		open( $fpOut, "| expand -$TabWidth > $RTLFile" ) :
 		open( $fpOut, "> $RTLFile" );
@@ -209,37 +209,35 @@ sub main{
 sub ReadLine {
 	local $_ = ReadLineSub( $_[ 0 ] );
 	
-	if( !$VppStage ){
-		my( $Cnt );
-		my( $Line );
-		my( $LineCnt ) = $.;
+	my( $Cnt );
+	my( $Line );
+	my( $LineCnt ) = $.;
+	
+	while( m@(//#?|/\*|(?<!\\)")@ ){
+		$Cnt = $#CommentPool + 1;
 		
-		while( m#(//|/\*|(?<!\\)")# ){
-			$Cnt = $#CommentPool + 1;
-			
-			if( $1 eq '//' ){
-				push( @CommentPool, $1 ) if( s#(//.*)#<__COMMENT_${Cnt}__># );
-			}elsif( $1 eq '"' ){
-				if( s/((?<!\\)".*?(?<!\\)")/<__STRING_${Cnt}__>/ ){
-					push( @CommentPool, $1 );
-				}else{
-					Error( 'unterminated "' );
-					s/"//;
-				}
+		if( $1 eq '//' ){
+			push( @CommentPool, $1 ) if( s#(//.*)#<__COMMENT_${Cnt}__># && !$VppStage );
+		}elsif( $1 eq '"' ){
+			if( s/((?<!\\)".*?(?<!\\)")/<__STRING_${Cnt}__>/ ){
+				push( @CommentPool, $1 ) if( !$VppStage );
 			}else{
-				if( s#(/\*.*?\*/)#<__COMMENT_${Cnt}__>#s ){
-					# /* ... */ の組が発見されたら，置換
-					push( @CommentPool, $1 );
-					$ResetLinePos = $.;
-					last;
-				}
-				# /* ... */ の組が発見されないので，発見されるまで行 cat
-				if( !( $Line = ReadLineSub( $_[ 0 ] ))){
-					Error( 'unterminated */', $LineCnt );
-					last;
-				}
-				$_ .= $Line;
+				Error( 'unterminated "' );
+				s/"//;
 			}
+		}else{
+			if( s#(/\*.*?\*/)#<__COMMENT_${Cnt}__>#s ){
+				# /* ... */ の組が発見されたら，置換
+				push( @CommentPool, $1 ) if( !$VppStage );
+				$ResetLinePos = $.;
+				last;
+			}
+			# /* ... */ の組が発見されないので，発見されるまで行 cat
+			if( !( $Line = ReadLineSub( $_[ 0 ] ))){
+				Error( 'unterminated */', $LineCnt );
+				last;
+			}
+			$_ .= $Line;
 		}
 	}
 	
@@ -254,7 +252,11 @@ sub ReadLineSub {
 		if( $VppStage && /^#\s*(\d+)\s+"(.*)"/ ){
 			$. = $1 - 1;
 			$DefFile = ( $2 eq "-" ) ? $ARGV[ 0 ] : $2;
+		}elsif( m@^\s*//#@ ){
+			$ResetLinePos = $.;
+			next;
 		}else{
+			s@\s*//#.*@@;
 			last;
 		}
 	}
@@ -505,10 +507,10 @@ sub StartModule{
 	
 	if( !/^\s*;/ ){
 		while( $_ = ReadLine( $fpIn )){
+			$_ = ExpandMacro( $_, $EX_INTFUNC );
+			
 			last if( /\s*\);/ );
 			next if( /^\s*\(\s*$/ || /^#/ );
-			
-			$_ = ExpandMacro( $_, $EX_INTFUNC );
 			
 			s/\boutput\s*reg\b/output reg/;
 			s/outreg/output reg/g;
@@ -526,7 +528,7 @@ sub StartModule{
 						$3 . "\n";
 				}
 			}else{
-				s|^[ \t]+|\t|;
+				s|^[ \t]*|\t|;
 			}
 			$PortDef .= $_;
 		}
@@ -689,24 +691,22 @@ sub PrintRTL{
 	local( $_ ) = @_;
 	my( $tmp );
 	
-	# //# コメント削除
-	if( s@^\s//#.*?\n@@gs ){
-		$ResetLinePos = $.;
-	}
-	
-	s@\s*//#.*@@;
-	
 	# Case / FullCase 処理
 	s|\bC(asex?\s*\(.*\))|c$1 /* synopsys parallel_case */|g;
 	s|\bFullC(asex?\s*\(.*\))|c$1 /* synopsys parallel_case full_case */|g;
 	
-	if( !$VppStage && $ResetLinePos ){
-		if( $ResetLinePos == $. ){
-			$_ .= sprintf( "# %d \"$DefFile\"\n", $. );
-		}else{
-			$_ = sprintf( "# %d \"$DefFile\"\n", $. ) . $_;
+	if( $VppStage ){
+		# 空行圧縮
+		s/^([ \t]*\n)([ \t]*\n)+/$1/gm;
+	}else{
+		if( $ResetLinePos ){
+			if( $ResetLinePos == $. ){
+				$_ .= sprintf( "# %d \"$DefFile\"\n", $. );
+			}else{
+				$_ = sprintf( "# %d \"$DefFile\"\n", $. ) . $_;
+			}
+			$ResetLinePos = 0;
 		}
-		$ResetLinePos = 0;
 	}
 	
 	if( !( $VppStage && $bPrevLineBlank && /^\s*$/ )){
@@ -966,7 +966,7 @@ sub GetModuleIO{
 	#print if( $Debug );
 	s/\boutreg\b/output reg/g;
 	s/($SigTypeDef)/\n$1/g;
-	s/ *;.*//g;
+	s/ *[;\)].*//g;
 	
 	# port 以外を削除
 	s/(.*)/DeleteExceptPort($1)/ge;
@@ -1382,10 +1382,11 @@ sub OutputWireList{
 		));
 		
 		# bus width is weakly defined error
-		Warning( "Bus size is not fixed '$ModuleName.$Wire->{ name }'" )
-			if(( $Wire->{ attr } & (
-				$ATTR_WEAK_W | $ATTR_DC_WEAK_W | $ATTR_DEF
-			)) == $ATTR_WEAK_W );
+		#Warning( "Bus size is not fixed '$ModuleName.$Wire->{ name }'" )
+		#	if(
+		#		( $Wire->{ attr } & ( $ATTR_WEAK_W | $ATTR_DC_WEAK_W | $ATTR_DEF )) == $ATTR_WEAK_W &&
+		#		( $iModuleMode & $MODMODE_TEST ) == 0
+		#	);
 	}
 	
 	if( $Debug ){
@@ -1504,9 +1505,11 @@ sub GetBusWidth {
 	
 	if( $_ =~ /^(\d+):(\d+)$/ ){
 		return( $1, $2 );
+	}elsif( $_ eq '' ){
+		return( 0, 0 );
 	}
 	
-	Error( "unknown bit width [$_]" );
+	Warning( "unknown bit width [$_]" );
 	return( -3, -1 );
 }
 
@@ -1521,11 +1524,10 @@ sub FormatBusWidth {
 	local( $_ ) = @_;
 	
 	if( /^\d+$/ ){
+		die( "FormatBusWidth()\n" );
 		return "[$_:0]";
-	}elsif( /^\d/ ){
-		return "[$_]";
 	}else{
-		return $_;
+		return "[$_]";
 	}
 }
 
