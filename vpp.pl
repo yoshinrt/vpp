@@ -397,7 +397,7 @@ sub ExpandRepeatOutput {
 				}elsif( /^define\s+($CSymbol)\s+(.+)/ ){
 					# 名前と値定義
 					AddCppMacro( $1, $2 );
-				}elsif( /^define\s+($CSymbol)($OpenClose)\s+(.+)/ ){
+				}elsif( /^define\s+($CSymbol)($OpenClose)\s*(.*)/ ){
 					# 関数マクロ
 					my( $Name, $ArgList, $Macro ) = ( $1, $2, $3 );
 					
