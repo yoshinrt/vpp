@@ -11,6 +11,8 @@
 #	2013.01.17	$repeat のネストに対応
 #	2013.01.18	GetModuleIO() で parameter を wire 扱いにした
 #	2013.12.12	perlpp 内蔵
+#	2014.03.03	非出力ブロックの #repeat 引数を解析しない
+#				MultiLineParser, ReadSkelList 内で ExpandMacro をかけた
 #
 ##############################################################################
 
@@ -453,7 +455,9 @@ sub MultiLineParser {
 	my( $Line, $Word );
 	
 	while( $_ = ReadLine( $fpIn )){
-		( $Word, $Line ) = GetWord( $_ );
+		( $Word, $Line ) = GetWord(
+			ExpandMacro( $_, $EX_INTFUNC | $EX_STR | $EX_RMCOMMENT )
+		);
 		
 		if    ( $Word eq 'module'			){ StartModule( $Line );
 		}elsif( $Word eq 'module_inc'		){ StartModule( $Line, $MODMODE_INC );
@@ -1114,6 +1118,7 @@ sub ReadSkelList{
 	);
 	
 	while( $_ = ReadLine( $fpIn )){
+		$_ = ExpandMacro( $_, $EX_INTFUNC | $EX_STR | $EX_RMCOMMENT );
 		s/\/\/.*//;
 		s/#.*//;
 		next if( /^\s*$/ );
@@ -1547,6 +1552,13 @@ sub RepeatOutput{
 	my( $VarName );
 	
 	my( $RepCntSt, $Step );
+	
+	if( $BlockNoOutput ){
+		# 非出力ブロック中は，repeat の引数に未定義のマクロが
+		# 定義されている可能性があるので，引数解析前に処理
+		ExpandRepeatOutput( $BLKMODE_REPEAT, 1 );
+		return;
+	}
 	
 	$RepCntEd = ExpandMacro( $RepCntEd, $EX_CPP | $EX_STR );
 	
