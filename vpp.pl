@@ -13,6 +13,7 @@
 #	2013.12.12	perlpp 内蔵
 #	2014.03.03	非出力ブロックの #repeat 引数を解析しない
 #				MultiLineParser, ReadSkelList 内で ExpandMacro をかけた
+#	2014.04.10	instance の parameter リストで改行できるようにした
 #
 ##############################################################################
 
@@ -272,7 +273,7 @@ sub GetFuncArg {
 	( $fp, $_ ) = @_;
 	my( $Line );
 	
-	while( $_ !~ /^$OpenClose/ ){
+	while( !/^$OpenClose/ ){
 		$ResetLinePos = $.;
 		
 		if( !( $Line = ReadLine( $fp ))){
@@ -746,7 +747,7 @@ sub PrintRTL{
 #		IO		ポートタイプを強制的に inout にする
 
 sub DefineInst{
-	my( $Line ) = @_;
+	local( $_ ) = @_;
 	my(
 		$Port,
 		$Wire,
@@ -770,14 +771,20 @@ sub DefineInst{
 	
 	my( $LineNo ) = $.;
 	
-	if( $Line !~ /\s+([\w\d]+)(\s+#\([^\)]+\))?\s+(\S+)\s+"?(\S+)"?\s*([\(;])/ ){
+	if( /#\(/ && !/#$OpenClose/ ){
+		/^(.*?#)(.*)/;
+		$tmp = $1;
+		$_ = $tmp . GetFuncArg( $fpIn, $2 . "\n" );
+	}
+	
+	if( !/\s+([\w\d]+)(\s+#\([^\)]+\))?\s+(\S+)\s+"?(\S+)"?\s*([\(;])/s ){
 		Error( "syntax error (instance)" );
 		return;
 	}
 	
 	# get module name, module inst name, module file
 	
-	my( $ModuleName, $ModuleParam, $ModuleInst, $ModuleFile ) = ( $1, $2, $3, $4 );
+	my( $ModuleName, $ModuleParam, $ModuleInst, $ModuleFile ) = ( $1, ExpandMacro( $2, $EX_STR | $EX_COMMENT ), $3, $4 );
 	$ModuleParam = '' if( !defined( $ModuleParam ));
 	
 	if( $ModuleInst eq "*" ){
@@ -803,9 +810,9 @@ sub DefineInst{
 	
 	# input/output 文 1 行ごとの処理
 	
-	while( $Line = shift( @ModuleIO )){
+	while( $_ = shift( @ModuleIO )){
 		
-		( $InOut, $BitWidth, @IOList )	= split( /\t/, $Line );
+		( $InOut, $BitWidth, @IOList )	= split( /\t/, $_ );
 		next if( $InOut !~ /^(?:input|output|inout)$/ );
 		
 		while( $Port = shift( @IOList )){
