@@ -14,6 +14,8 @@
 #	2014.03.03	非出力ブロックの #repeat 引数を解析しない
 #				MultiLineParser, ReadSkelList 内で ExpandMacro をかけた
 #	2014.04.10	instance の parameter リストで改行できるようにした
+#	2014.05.14	parameter で enum する enum_p 追加
+#	2014.05.15	マクロ追加
 #
 ##############################################################################
 
@@ -117,7 +119,7 @@ sub main{
 	local( $_ );
 	
 	if( $#ARGV < 0 ){
-		print( "usage: vpp.pl <Def file>\n" );
+		print( "usage: vpp.pl [-vE] [-I<path>] [-D<def>[=<val>]] [-tab<width>] <Def file>\n" );
 		return;
 	}
 	
@@ -184,25 +186,30 @@ sub main{
 	close( $fpOut );
 	close( $fpIn );
 	
-	system( "cat $CppFile" ) if( $CppOnly );
-	
-	# vpp
 	if( !open( $fpIn, "< $CppFile" )){
 		Error( "can't open file \"$CppFile\"" );
 		return;
 	}
 	
-	unlink( $ListFile );
-	
-	$ExpandTab ?
-		open( $fpOut, "| expand -$TabWidth > $RTLFile" ) :
-		open( $fpOut, "> $RTLFile" );
-	
-	$VppStage = 1;
-	MultiLineParser();
-	
-	close( $fpOut );
-	close( $fpIn );
+	if( $CppOnly ){
+		while( <$fpIn> ){
+			print( ExpandMacro( $_, $EX_STR | $EX_COMMENT ));
+		}
+	}else{
+		# vpp
+		
+		unlink( $ListFile );
+		
+		$ExpandTab ?
+			open( $fpOut, "| expand -$TabWidth > $RTLFile" ) :
+			open( $fpOut, "> $RTLFile" );
+		
+		$VppStage = 1;
+		MultiLineParser();
+		
+		close( $fpOut );
+		close( $fpIn );
+	}
 	
 	unlink( $CppFile );
 }
@@ -309,9 +316,9 @@ sub ExpandRepeatOutput {
 		s/\$(repeat|perl)/#$1/g;
 		s/\$end\b/#endrep/g;
 		s/\bEOF\b/#endperl/g;
-		s/\benum\b/#enum/g;
+		s/(?<!#)\benum\b/#enum/g;
 		
-		if( /^\s*#\s*[a-z]+\b/	){
+		if( /^\s*#\s*$CSymbol/	){
 			
 			# \ で終わっている行を連結
 			while( /\\$/ ){
@@ -392,7 +399,9 @@ sub ExpandRepeatOutput {
 					last;
 				}
 			}elsif( /^enum\b(.*)/ ){
-				Enumerate( $1 );
+				Enumerate( $1, 0 );
+			}elsif( /^enum_p\b(.*)/ ){
+				Enumerate( $1, 1 );
 			}elsif( !$BlockNoOutput ){
 				if( /^define\s+($CSymbol)$/ ){
 					# 名前だけ定義
@@ -1669,12 +1678,13 @@ sub ExecPerl {
 
 ### enum state ###############################################################
 # syntax:
-#	enum [<type name>] { <n0> [, <n1> ...] } [<reg name> ];
+#	enum|enum_p [<type name>] { <n0> [, <n1> ...] } [<reg name> ];
+#   enum は define を使用，enum_p は parameter を使用
 # module 内なら parameter，module 外なら define
 
 sub Enumerate{
 	
-	my( $Line ) = @_;
+	my( $Line, $bParam ) = @_;
 	local( $_ )  = $Line;
 	my(
 		$TypeName,
@@ -1737,10 +1747,10 @@ sub Enumerate{
 	
 	# enum list の define 出力
 	for( $i = 0; $i <= $#EnumList; ++$i ){
-		if( $iModuleMode == $MODMODE_NONE ){
-			AddCppMacro( $EnumList[ $i ], "$BitWidth\'d$i" );
-		}else{
+		if( $bParam ){
 			PrintRTL( "\tparameter\t$EnumList[ $i ]\t= $BitWidth\'d$i;\n" );
+		}else{
+			AddCppMacro( $EnumList[ $i ], "$BitWidth\'d$i" );
 		}
 	}
 }
@@ -2070,3 +2080,6 @@ __DATA__
 #define WIDTH( w )		$Eval(( w ) >= 2 ? int( log(( w ) * 2 - 1 ) / log( 2 )) : 1 )
 #define X( w )			{ w { 1'bx }}
 #define H( w )			{ w { 1'b1 }}
+#define HEX_V( w, v )	$Eval( sprintf(( w ) . "'h%0" . int((( w ) + 3 ) / 4 ) . "x", v ))
+#define BIN_V( w, v )	$Eval( sprintf(( w ) . "'b%0" . ( w ) . "b", v ))
+#define NULL			$Eval( '' )
