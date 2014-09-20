@@ -16,6 +16,7 @@
 #	2014.04.10	instance の parameter リストで改行できるようにした
 #	2014.05.14	parameter で enum する enum_p 追加
 #	2014.05.15	マクロ追加
+#	2014.08.29	/* */ があるとそれ以上文字列・コメント解析をしなかった
 #
 ##############################################################################
 
@@ -193,7 +194,7 @@ sub main{
 	
 	if( $CppOnly ){
 		while( <$fpIn> ){
-			print( ExpandMacro( $_, $EX_STR | $EX_COMMENT ));
+			print( $Debug ? $_ : ExpandMacro( $_, $EX_STR | $EX_COMMENT ));
 		}
 	}else{
 		# vpp
@@ -240,7 +241,6 @@ sub ReadLine {
 				# /* ... */ の組が発見されたら，置換
 				push( @CommentPool, $1 ) if( !$VppStage );
 				$ResetLinePos = $.;
-				last;
 			}
 			# /* ... */ の組が発見されないので，発見されるまで行 cat
 			if( !( $Line = ReadLineSub( $_[ 0 ] ))){
@@ -318,7 +318,7 @@ sub ExpandRepeatOutput {
 		s/\bEOF\b/#endperl/g;
 		s/(?<!#)\benum\b/#enum/g;
 		
-		if( /^\s*#\s*$CSymbol/	){
+		if( /^\s*#\s*(?:ifdef|ifndef|if|elif|else|endif|repeat|endrep|perl|endperl|enum|enum_p|define|define|define|undef|include|require)\b/ ){
 			
 			# \ で終わっている行を連結
 			while( /\\$/ ){
