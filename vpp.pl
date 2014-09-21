@@ -1,4 +1,4 @@
-#!/usr/bin/perl
+#!/usr/bin/perl -w
 
 ##############################################################################
 #
@@ -272,6 +272,7 @@ sub ReadLineSub {
 			last;
 		}
 	}
+	return '' if( !defined( $_ ));
 	$_;
 }
 
@@ -428,7 +429,7 @@ sub ExpandRepeatOutput {
 							$ArgNum = -$ArgNum;
 							last;
 						}
-						$Macro =~ s/\b$ArgList[ $i ]\b/<__\ARG_${i}\__>/g;
+						$Macro =~ s/\b$ArgList[ $i ]\b/<__ARG_${i}__>/g;
 					}
 					
 					AddCppMacro( $Name, $Macro, $ArgNum );
@@ -501,8 +502,7 @@ sub StartModule{
 		$InOut,
 		$BitWidth,
 		$Attr,
-		$Port,
-		$Line
+		$Port
 	);
 	
 	# wire list 初期化
@@ -524,11 +524,7 @@ sub StartModule{
 	# module hoge #( ... ) 形式の parameter 認識
 	if( /^(\s*#)(\(.*)/ ){
 		( $ParamDef, $_ ) = ( $1, "($'\n" );
-		while( !/^$OpenClose/ ){
-			$Line = ReadLine( $fpIn );
-			last if( $Line eq '' );
-			$_ .= ExpandMacro( $Line, $EX_INTFUNC );
-		}
+		$_ = GetFuncArg( $fpIn, $_ );
 		
 		/^($OpenClose\s*)/;
 		$ParamDef .= $1;
@@ -811,7 +807,9 @@ sub DefineInst{
 	
 	# get module name, module inst name, module file
 	
-	my( $ModuleName, $ModuleParam, $ModuleInst, $ModuleFile ) = ( $1, ExpandMacro( $2, $EX_STR | $EX_COMMENT ), $3, $4 );
+	my( $ModuleName, $ModuleParam, $ModuleInst, $ModuleFile ) = (
+		$1, defined( $2 ) ? ExpandMacro( $2, $EX_STR | $EX_COMMENT ) : '', $3, $4
+	);
 	$ModuleParam = '' if( !defined( $ModuleParam ));
 	
 	if( $ModuleInst eq "*" ){
