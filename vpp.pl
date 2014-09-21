@@ -17,6 +17,7 @@
 #	2014.05.14	parameter で enum する enum_p 追加
 #	2014.05.15	マクロ追加
 #	2014.08.29	/* */ があるとそれ以上文字列・コメント解析をしなかった
+#	2014.09.21	module hoge #( param ... ) ( ... ) 形式に対応
 #
 ##############################################################################
 
@@ -107,6 +108,7 @@ my %WireList;
 my @SkelList;
 my $iModuleMode;
 my $PortDef;
+my $ParamDef;
 my %DefineTbl;
 
 my( @CommentPool );
@@ -499,7 +501,8 @@ sub StartModule{
 		$InOut,
 		$BitWidth,
 		$Attr,
-		$Port
+		$Port,
+		$Line
 	);
 	
 	# wire list 初期化
@@ -508,6 +511,7 @@ sub StartModule{
 	%WireList	= ();
 	$iModuleMode	= $MODMODE_NORMAL if( !defined( $iModuleMode ));
 	$PortDef		= '';
+	$ParamDef		= '';
 	
 	$PrintBuf	= \$RTLBuf;
 	$RTLBuf		= "";
@@ -516,6 +520,20 @@ sub StartModule{
 	
 	#PrintRTL( SkipToSemiColon( $_ ));
 	#SkipToSemiColon( $_ );
+	
+	# module hoge #( ... ) 形式の parameter 認識
+	if( /^(\s*#)(\(.*)/ ){
+		( $ParamDef, $_ ) = ( $1, "($'\n" );
+		while( !/^$OpenClose/ ){
+			$Line = ReadLine( $fpIn );
+			last if( $Line eq '' );
+			$_ .= ExpandMacro( $Line, $EX_INTFUNC );
+		}
+		
+		/^($OpenClose\s*)/;
+		$ParamDef .= $1;
+		$_ = $';
+	}
 	
 	# ); まで読む 何か読めたらそれをポートリストとみなす
 	
@@ -625,7 +643,7 @@ sub EndModule{
 		if( $PortDef || $PortDef2 ){
 			$PortDef .= "\t,\n" if( $PortDef && $PortDef2 );
 			$PortDef2 =~ s/,([^,]*)$/$1/;
-			PrintRTL( "(\n$PortDef$PortDef2)" );
+			PrintRTL( "$ParamDef(\n$PortDef$PortDef2)" );
 		}
 	}
 	
