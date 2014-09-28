@@ -1574,7 +1574,7 @@ sub FormatBusWidth {
 #      ....
 #   $end
 #	
-#	%d とか %{name}d でそれを置換
+#	%d とか %{name}02X でそれを置換
 
 sub RepeatOutput{
 	my( $BlockMode, $RepCntEd ) = @_;
@@ -1791,14 +1791,6 @@ sub PrintAllInputs {
 	PrintRTL( $_ );
 }
 
-### AutoFix Hi-Z signals #####################################################
-# syntax:
-#   $AutoFix <no/off>
-#
-# 使用制限:
-#  [3:2] 等 LSB が 0 でないものには適用不可
-#  wire より instance のポート幅が大きいと×
-
 ### requre ###################################################################
 
 sub Require {
@@ -2008,6 +2000,7 @@ sub ExpandPrintfFmtSub {
 
 ### sizeof / typeof ##########################################################
 
+# syntax: sizeof( var [, var...] )
 sub SizeOf {
 	local( $_ );
 	my( $Flag );
@@ -2030,6 +2023,7 @@ sub SizeOf {
 	$Bits;
 }
 
+# syntax: typeof( sig )
 sub TypeOf {
 	local( $_ );
 	my( $Flag );
@@ -2049,6 +2043,7 @@ sub TypeOf {
 	$_;
 }
 
+# syntax: $String( ... )
 sub Stringlize {
 	local( $_ ) = @_;
 	
