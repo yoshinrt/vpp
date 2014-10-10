@@ -18,6 +18,13 @@
 #	2014.05.15	マクロ追加
 #	2014.08.29	/* */ があるとそれ以上文字列・コメント解析をしなかった
 #	2014.09.21	module hoge #( param ... ) ( ... ) 形式に対応
+#	2014.10.01	`ifdef 切り等で本来認識されないポートを強制無視オプション追加
+#				-v 複数指定でデバッグレベル指定
+#				先頭が reg のポート名でバグっていたのを修正
+#				instance の {hoge,fuga} の扱い改善
+#				無名のポートが生成されるバグ修正
+#	2014.10.07	Error/Warning で include 元ファイルを表示する
+#	2014.10.09	input に NC 指定時は 0 固定
 #
 ##############################################################################
 
@@ -37,7 +44,8 @@ my $ATTR_DEF		= ( $enum <<= 1 );		# ポート・信号定義済み
 my $ATTR_DC_WEAK_W	= ( $enum <<= 1 );		# Bus Size は弱めの申告警告を抑制
 my $ATTR_WEAK_W		= ( $enum <<= 1 );		# Bus Size は弱めの申告
 my $ATTR_USED		= ( $enum <<= 1 );		# この template が使用された
-my $ATTR_NC			= ~0;
+my $ATTR_IGNORE		= ( $enum <<= 1 );		# `ifdef 切り等で本来無いポートを無視する等
+my $ATTR_NC			= ( $enum <<= 1 );		# 入力 0 固定，出力 open
 
 $enum = 0;
 my $BLKMODE_NORMAL	= $enum++;	# ブロック外
@@ -101,6 +109,7 @@ my $ResetLinePos	= 0;
 my $VppStage		= 0;
 my $bPrevLineBlank	= 1;
 my $CppOnly			= 0;
+my @IncludeList;
 
 # 定義テーブル関係
 my @WireList;
@@ -111,7 +120,7 @@ my $PortDef;
 my $ParamDef;
 my %DefineTbl;
 
-my( @CommentPool );
+my @CommentPool;
 
 main();
 exit( $ErrorCnt != 0 );
@@ -131,7 +140,7 @@ sub main{
 	while( 1 ){
 		$_ = $ARGV[ 0 ];
 		
-		if    ( /^-v/			){ $Debug = 1;
+		if    ( /^-v/			){ ++$Debug;
 		}elsif( /^-I(.*)/		){ push( @INC, $1 );
 		}elsif( /^-D(.+?)=(.+)/	){ AddCppMacro( $1, $2 );
 		}elsif( /^-D(.+)/		){ AddCppMacro( $1 );
@@ -175,7 +184,7 @@ sub main{
 	
 	ExpandRepeatOutput();
 	
-	if( $Debug ){
+	if( $Debug >= 2 ){
 		print( "=== macro ===\n" );
 		foreach $_ ( sort keys %DefineTbl ){
 			printf( "$_%s\t$DefineTbl{ $_ }{ macro }\n", $DefineTbl{ $_ }{ args } eq 's' ? '' : '()' );
@@ -768,6 +777,7 @@ sub PrintRTL{
 #		I		ポートタイプを強制的に input にする
 #		O		ポートタイプを強制的に output にする
 #		IO		ポートタイプを強制的に inout にする
+#		*D		無視
 
 sub DefineInst{
 	local( $_ ) = @_;
@@ -841,9 +851,10 @@ sub DefineInst{
 		next if( $InOut !~ /^(?:input|output|inout)$/ );
 		
 		while( $Port = shift( @IOList )){
-			( $Wire, $Attr ) = ConvPort2Wire( $Port, $BitWidth );
+			( $Wire, $Attr ) = ConvPort2Wire( $Port, $BitWidth, $InOut );
 			
-			if( $Attr != $ATTR_NC ){
+			if( !( $Attr & $ATTR_NC )){
+				next if( $Attr & $ATTR_IGNORE );
 				
 				# hoge(\d) --> hoge[$1] 対策
 				
@@ -886,8 +897,10 @@ sub DefineInst{
 					
 					if( $#_ > 0 ){
 						# { ... , ... } 等，concat 信号が接続されている
-						
 						foreach $WireBus ( @_ ){
+							next if( $WireBus =~ /^\d/ ); # 定数スキップ
+							$WireBus =~ s/\[.*\]//;
+							next if( $WireBus eq '' );
 							RegisterWire(
 								$WireBus,
 								'?',
@@ -907,9 +920,6 @@ sub DefineInst{
 					# 数字だけが指定された場合，bit幅表記をつける
 					$Wire = sprintf( "%d'd$Wire", GetBusWidth2( $BitWidth ));
 				}
-			}else{
-				# NC 指定
-				$Wire = '';
 			}
 			
 			# .hoge( hoge ), の list を出力
@@ -1018,7 +1028,7 @@ sub DeleteExceptPort{
 	local( $_ ) = @_;
 	my( $tmp );
 	
-	s/\boutput\s+reg/output/g;
+	s/\boutput\s+reg\b/output/g;
 	
 	if( /^($SigTypeDef)\s*/ ){
 		
@@ -1073,18 +1083,28 @@ sub GetWord{
 ### print error msg ##########################################################
 
 sub Error{
-	local $_;
-	my $LineNo;
-	( $_, $LineNo ) = @_;
-	printf( "$DefFile(%d): $_\n", $LineNo || $. );
+	my( $Msg, $LineNo ) = @_;
+	PrintDiagMsg( $Msg, $LineNo );
 	++$ErrorCnt;
 }
 
 sub Warning{
+	my( $Msg, $LineNo ) = @_;
+	PrintDiagMsg( "Warning: $Msg", $LineNo );
+}
+
+sub PrintDiagMsg {
 	local $_;
 	my $LineNo;
 	( $_, $LineNo ) = @_;
-	printf( "$DefFile(%d): Warning: $_\n", $LineNo || $. );
+	
+	if( $#IncludeList >= 0 ){
+		foreach $_ ( @IncludeList ){
+			print( "...included at $_->{ FileName }($_->{ LineCnt }):\n" );
+		}
+	}
+	
+	printf( "$DefFile(%d): $_\n", $LineNo || $. );
 }
 
 ### define default port --> wire name ########################################
@@ -1160,7 +1180,7 @@ sub ReadSkelList{
 		
 		( $Port, $Wire, $AttrLetter ) = ( $1, $2, $3 );
 		
-		if( $Wire =~ /^[MBU]?(?:NP|NC|W|I|O|IO|U)$/ ){
+		if( $Wire =~ /^[MBU]?(?:NP|NC|W|I|O|IO|U|\*D)$/ ){
 			$AttrLetter = $Wire;
 			$Wire = "";
 		}
@@ -1179,6 +1199,7 @@ sub ReadSkelList{
 			( $AttrLetter =~ /I$/  ) ? $ATTR_IN		:
 			( $AttrLetter =~ /O$/  ) ? $ATTR_OUT	:
 			( $AttrLetter =~ /IO$/ ) ? $ATTR_INOUT	:
+			( $AttrLetter =~ /\*D$/ )  ? $ATTR_IGNORE	:
 								0;
 		
 		push( @SkelList, {
@@ -1209,7 +1230,7 @@ sub WarnUnusedSkelList{
 
 sub ConvPort2Wire {
 	
-	my( $Port, $BitWidth ) = @_;
+	my( $Port, $BitWidth, $InOut ) = @_;
 	my(
 		$SkelPort,
 		$SkelWire,
@@ -1240,7 +1261,15 @@ sub ConvPort2Wire {
 			
 			# NC ならリストを作らない
 			
-			if( $Attr == $ATTR_NC ){
+			if( $Attr & $ATTR_NC ){
+				if( $InOut eq 'input' ){
+					if( $BitWidth =~ /(\d+):(\d+)/ ){
+						$BitWidth = $1 - $2 + 1;
+					}elsif( $BitWidth eq '' ){
+						$BitWidth = 1;
+					}
+					return( "${BitWidth}'d0", $Attr );
+				}
 				return( "", $Attr );
 			}
 			last;
@@ -1574,7 +1603,7 @@ sub FormatBusWidth {
 #      ....
 #   $end
 #	
-#	%d とか %{name}02X でそれを置換
+#	%d とか %{name}d でそれを置換
 
 sub RepeatOutput{
 	my( $BlockMode, $RepCntEd ) = @_;
@@ -1673,7 +1702,7 @@ sub ExecPerl {
 	$PerlBuf =~ s/^\s*#.*$//gm;
 	$PerlBuf = ExpandMacro( $PerlBuf, $EX_INTFUNC | $EX_STR | $EX_COMMENT | $EX_NOREAD );
 	
-	if( $Debug ){
+	if( $Debug >= 2 ){
 		print( "\n=========== perl code =============\n" );
 		print( $PerlBuf );
 		print( "\n===================================\n" );
@@ -1681,7 +1710,7 @@ sub ExecPerl {
 	$_ = ();
 	$_ = eval( $PerlBuf );
 	Error( $@ ) if( $@ ne '' );
-	if( $Debug ){
+	if( $Debug >= 2 ){
 		print( "\n=========== output code =============\n" );
 		print( $_ );
 		print( "\n===================================\n" );
@@ -1791,6 +1820,14 @@ sub PrintAllInputs {
 	PrintRTL( $_ );
 }
 
+### AutoFix Hi-Z signals #####################################################
+# syntax:
+#   $AutoFix <no/off>
+#
+# 使用制限:
+#  [3:2] 等 LSB が 0 でないものには適用不可
+#  wire より instance のポート幅が大きいと×
+
 ### requre ###################################################################
 
 sub Require {
@@ -1821,7 +1858,7 @@ sub AddCppMacro {
 	if(
 		( !defined( $bNoCheck ) || !$bNoCheck ) &&
 		defined( $DefineTbl{ $Name } ) &&
-		( $DefineTbl{ $Name }{ args } ne $Args || $DefineTbl{ $Name }{ macro } != $Macro )
+		( $DefineTbl{ $Name }{ args } ne $Args || $DefineTbl{ $Name }{ macro } ne $Macro )
 	){
 		Warning( "redefined macro '$Name'" );
 	}
@@ -2000,7 +2037,6 @@ sub ExpandPrintfFmtSub {
 
 ### sizeof / typeof ##########################################################
 
-# syntax: sizeof( var [, var...] )
 sub SizeOf {
 	local( $_ );
 	my( $Flag );
@@ -2023,7 +2059,6 @@ sub SizeOf {
 	$Bits;
 }
 
-# syntax: typeof( sig )
 sub TypeOf {
 	local( $_ );
 	my( $Flag );
@@ -2043,7 +2078,6 @@ sub TypeOf {
 	$_;
 }
 
-# syntax: $String( ... )
 sub Stringlize {
 	local( $_ ) = @_;
 	
@@ -2061,9 +2095,13 @@ sub Include {
 	$_ = ExpandMacro( $_, $EX_CPP | $EX_STR | $EX_NOREAD );
 	$_ = $1 if( /"(.*?)"/ );
 	
-	my $RewindPtr	= tell( $fpIn );
-	my $LineCnt		= $.;
-	my $PrevDefFile	= $DefFile;
+	push(
+		@IncludeList, {
+			RewindPtr	=> tell( $fpIn ),
+			LineCnt		=> $.,
+			FileName	=> $DefFile
+		}
+	);
 	
 	close( $fpIn );
 	
@@ -2072,15 +2110,18 @@ sub Include {
 	}else{
 		$DefFile = $_;
 		PrintRTL( "# 1 \"$_\"\n" );
-		print( "including file '$_'...\n" ) if( $Debug );
+		print( "including file '$_'...\n" ) if( $Debug >= 2 );
 		ExpandRepeatOutput();
-		print( "back to file '$PrevDefFile'...\n" ) if( $Debug );
+		printf( "back to file '%s'...\n", $IncludeList[ $#IncludeList ]->{ FileName } ) if( $Debug >= 2 );
 	}
-	$DefFile = $PrevDefFile;
+	
+	$_ = pop( @IncludeList );
+	
+	$DefFile = $_->{ FileName };
 	open( $fpIn, "< $DefFile" );
 	
-	seek( $fpIn, $RewindPtr, $SEEK_SET );
-	$. = $LineCnt;
+	seek( $fpIn, $_->{ RewindPtr }, $SEEK_SET );
+	$. = $_->{ LineCnt };
 	$ResetLinePos = $.;
 }
 
