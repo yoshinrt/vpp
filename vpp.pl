@@ -25,6 +25,10 @@
 #				無名のポートが生成されるバグ修正
 #	2014.10.07	Error/Warning で include 元ファイルを表示する
 #	2014.10.09	input に NC 指定時は 0 固定
+#	2015.01.19	Case Casex のときのコメント処理がおかしくなっていた
+#	2015.02.04	-vvvE とかの opt 指定に対応
+#				unused template 警告が出なかったのを修正
+#	2015.02.12	#repeat() の %b が抜けてた
 #
 ##############################################################################
 
@@ -120,7 +124,10 @@ my $PortDef;
 my $ParamDef;
 my %DefineTbl;
 
-my @CommentPool;
+my @CommentPool = (
+	'/* synopsys parallel_case */',
+	'/* synopsys parallel_case full_case */'
+);
 
 main();
 exit( $ErrorCnt != 0 );
@@ -140,12 +147,13 @@ sub main{
 	while( 1 ){
 		$_ = $ARGV[ 0 ];
 		
-		if    ( /^-v/			){ ++$Debug;
-		}elsif( /^-I(.*)/		){ push( @INC, $1 );
+		if    ( /^-I(.*)/		){ push( @INC, $1 );
 		}elsif( /^-D(.+?)=(.+)/	){ AddCppMacro( $1, $2 );
 		}elsif( /^-D(.+)/		){ AddCppMacro( $1 );
-		}elsif( /^-E/			){ $CppOnly = 1;
 		}elsif( /^-tab(.*)/		){ $ExpandTab = 1; $TabWidth = eval( $1 );
+		}elsif( /^-/			){
+			while( s/v// ){ ++$Debug; }
+			$CppOnly = 1 if( /^-E/ );
 		}else					 { last;
 		}
 		shift( @ARGV );
@@ -729,8 +737,8 @@ sub PrintRTL{
 	my( $tmp );
 	
 	# Case / FullCase 処理
-	s|\bC(asex?\s*\(.*\))|c$1 /* synopsys parallel_case */|g;
-	s|\bFullC(asex?\s*\(.*\))|c$1 /* synopsys parallel_case full_case */|g;
+	s|\bC(asex?\s*\(.*\))|c$1 <__COMMENT_0__>|g;
+	s|\bFullC(asex?\s*\(.*\))|c$1 <__COMMENT_1__>|g;
 	
 	if( $VppStage ){
 		# 空行圧縮
@@ -1220,7 +1228,7 @@ sub WarnUnusedSkelList{
 	my( $Skel );
 	
 	foreach $Skel ( @SkelList ){
-		if( !( $Skel->{ attr } && $ATTR_USED )){
+		if( !( $Skel->{ attr } & $ATTR_USED )){
 			Warning( "unused template ( $Skel->{ port } --> $Skel->{ wire } \@ $_ )", $LineNo );
 		}
 	}
@@ -1768,9 +1776,14 @@ sub Enumerate{
 	
 	# get typedef name
 	
+		print( "$_:zzzhoge\n" );
 	if( /(.+)({.*)/ ){
+		print( "$_:hoge\n" );
 		$TypeName	= $1;
-		$_		= $2;
+		$_			= $2;
+	}else{
+		print( "$_:fuga\n" );
+		$TypeName	= '';
 	}
 	
 	# make enum list
@@ -1819,14 +1832,6 @@ sub PrintAllInputs {
 	s/,([^,]*)$/$1/;
 	PrintRTL( $_ );
 }
-
-### AutoFix Hi-Z signals #####################################################
-# syntax:
-#   $AutoFix <no/off>
-#
-# 使用制限:
-#  [3:2] 等 LSB が 0 でないものには適用不可
-#  wire より instance のポート幅が大きいと×
 
 ### requre ###################################################################
 
@@ -1894,7 +1899,7 @@ sub ExpandMacro {
 	$Mode = $EX_CPP | $EX_REP if( !defined( $Mode ));
 	
 	if( $BlockRepeat && $Mode & $EX_REP ){
-		s/%(?:\{(.+?)\})?([+\-\d\.#]*[%cCdiouxXeEfgGnpsS])/ExpandPrintfFmtSub( $2, $1 )/ge;
+		s/%(?:\{(.+?)\})?([+\-\d\.#]*[%cCdiouxXeEfgGnpsSb])/ExpandPrintfFmtSub( $2, $1 )/ge;
 	}
 	
 	my $bReplaced = 1;
