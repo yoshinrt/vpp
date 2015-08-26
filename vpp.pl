@@ -29,6 +29,7 @@
 #	2015.02.04	-vvvE とかの opt 指定に対応
 #				unused template 警告が出なかったのを修正
 #	2015.02.12	#repeat() の %b が抜けてた
+#	2015.08.06	endmodule 直後のコメントが戻せていなかった
 #
 ##############################################################################
 
@@ -199,7 +200,7 @@ sub main{
 		}
 		print( "=== comment =\n" );
 		print( join( "\n", @CommentPool ));
-		print( "=============\n" );
+		print( "\n=============\n" );
 	}
 	undef( %DefineTbl );
 	
@@ -632,7 +633,7 @@ sub EndModule{
 	ExpandBus();
 	
 	PrintRTL( '//' ) if( $iModuleMode & $MODMODE_INC );
-	PrintRTL( $_ );
+	PrintRTL( ExpandMacro( $_, $EX_STR | $EX_COMMENT ));
 	undef( $PrintBuf );
 	
 	# module port リストを出力
