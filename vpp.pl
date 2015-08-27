@@ -30,6 +30,7 @@
 #				unused template 警告が出なかったのを修正
 #	2015.02.12	#repeat() の %b が抜けてた
 #	2015.08.06	endmodule 直後のコメントが戻せていなかった
+#	2015.08.27	instance の FileName の環境変数を展開
 #
 ##############################################################################
 
@@ -827,7 +828,8 @@ sub DefineInst{
 	# get module name, module inst name, module file
 	
 	my( $ModuleName, $ModuleParam, $ModuleInst, $ModuleFile ) = (
-		$1, defined( $2 ) ? ExpandMacro( $2, $EX_STR | $EX_COMMENT ) : '', $3, $4
+		$1, defined( $2 ) ? ExpandMacro( $2, $EX_STR | $EX_COMMENT ) : '', $3,
+		ExpandEnv( $4 )
 	);
 	$ModuleParam = '' if( !defined( $ModuleParam ));
 	
@@ -2129,6 +2131,27 @@ sub Include {
 	seek( $fpIn, $_->{ RewindPtr }, $SEEK_SET );
 	$. = $_->{ LineCnt };
 	$ResetLinePos = $.;
+}
+
+### 環境変数展開 #############################################################
+
+sub ExpandEnv {
+	local( $_ ) = @_;
+	
+	s/(\$\{.+?\})/ExpandEnvSub( $1 )/ge;
+	s/(\$\(.+?\))/ExpandEnvSub( $1 )/ge;
+	
+	$_;
+}
+
+sub ExpandEnvSub {
+	local( $_ ) = @_;
+	my( $org ) = $_;
+	
+	s/^\$[\(\{]//;
+	s/[\}\)]$//;
+	
+	$ENV{ $_ } || $org;
 }
 
 ##############################################################################
