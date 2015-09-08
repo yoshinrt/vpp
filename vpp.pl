@@ -31,6 +31,7 @@
 #	2015.02.12	#repeat() の %b が抜けてた
 #	2015.08.06	endmodule 直後のコメントが戻せていなかった
 #	2015.08.27	instance の FileName の環境変数を展開
+#	2015.09.08	一行内に /* ... */ があるときのバグ修正
 #
 ##############################################################################
 
@@ -257,12 +258,11 @@ sub ReadLine {
 				Error( 'unterminated "' );
 				s/"//;
 			}
+		}elsif( s#(/\*.*?\*/)#<__COMMENT_${Cnt}__>#s ){
+			# /* ... */ の組が発見されたら，置換
+			push( @CommentPool, $1 ) if( !$VppStage );
+			$ResetLinePos = $.;
 		}else{
-			if( s#(/\*.*?\*/)#<__COMMENT_${Cnt}__>#s ){
-				# /* ... */ の組が発見されたら，置換
-				push( @CommentPool, $1 ) if( !$VppStage );
-				$ResetLinePos = $.;
-			}
 			# /* ... */ の組が発見されないので，発見されるまで行 cat
 			if( !( $Line = ReadLineSub( $_[ 0 ] ))){
 				Error( 'unterminated */', $LineCnt );
