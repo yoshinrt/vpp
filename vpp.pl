@@ -4,34 +4,7 @@
 #
 #		vpp -- verilog preprocessor		Ver.1.10
 #		Copyright(C) by DDS
-#
-##############################################################################
-#
-#	2013.01.16	2次元配列の後ろの [...] に反応しておかしくなってたのを修正
-#	2013.01.17	$repeat のネストに対応
-#	2013.01.18	GetModuleIO() で parameter を wire 扱いにした
-#	2013.12.12	perlpp 内蔵
-#	2014.03.03	非出力ブロックの #repeat 引数を解析しない
-#				MultiLineParser, ReadSkelList 内で ExpandMacro をかけた
-#	2014.04.10	instance の parameter リストで改行できるようにした
-#	2014.05.14	parameter で enum する enum_p 追加
-#	2014.05.15	マクロ追加
-#	2014.08.29	/* */ があるとそれ以上文字列・コメント解析をしなかった
-#	2014.09.21	module hoge #( param ... ) ( ... ) 形式に対応
-#	2014.10.01	`ifdef 切り等で本来認識されないポートを強制無視オプション追加
-#				-v 複数指定でデバッグレベル指定
-#				先頭が reg のポート名でバグっていたのを修正
-#				instance の {hoge,fuga} の扱い改善
-#				無名のポートが生成されるバグ修正
-#	2014.10.07	Error/Warning で include 元ファイルを表示する
-#	2014.10.09	input に NC 指定時は 0 固定
-#	2015.01.19	Case Casex のときのコメント処理がおかしくなっていた
-#	2015.02.04	-vvvE とかの opt 指定に対応
-#				unused template 警告が出なかったのを修正
-#	2015.02.12	#repeat() の %b が抜けてた
-#	2015.08.06	endmodule 直後のコメントが戻せていなかった
-#	2015.08.27	instance の FileName の環境変数を展開
-#	2015.09.08	一行内に /* ... */ があるときのバグ修正
+#		$Id$
 #
 ##############################################################################
 
@@ -340,7 +313,7 @@ sub ExpandRepeatOutput {
 		s/\bEOF\b/#endperl/g;
 		s/(?<!#)\benum\b/#enum/g;
 		
-		if( /^\s*#\s*(?:ifdef|ifndef|if|elif|else|endif|repeat|endrep|perl|endperl|enum|enum_p|define|define|define|undef|include|require)\b/ ){
+		if( /^\s*#\s*(?:ifdef|ifndef|if|elif|else|endif|repeat|foreach|endrep|perl|endperl|enum|enum_p|define|define|define|undef|include|require)\b/ ){
 			
 			# \ で終わっている行を連結
 			while( /\\$/ ){
@@ -404,7 +377,10 @@ sub ExpandRepeatOutput {
 				}
 			}elsif( /^repeat\s*($OpenClose)/ ){
 				# repeat / endrepeat
-				RepeatOutput( $BlockMode, $1 );
+				RepeatOutput( $1 );
+			}elsif( /^foreach\s*($OpenClose)/ ){
+				# foreach / endrepeat
+				ForeachOutput( $1 );
 			}elsif( /^endrep\b/ ){
 				if( $BlockMode != $BLKMODE_REPEAT ){
 					Error( "unexpected #endrep" );
@@ -1610,14 +1586,14 @@ sub FormatBusWidth {
 
 ### repeat output ############################################################
 # syntax:
-#   $repeat( [ name: ] REPEAT_NUM ) or $repeat( [ name: ] start [, stop [, step ]] )
+#   #repeat( [ name: ] REPEAT_NUM ) or $repeat( [ name: ] start [, stop [, step ]] )
 #      ....
-#   $end
+#   #endrep
 #	
 #	%d とか %{name}d でそれを置換
 
 sub RepeatOutput{
-	my( $BlockMode, $RepCntEd ) = @_;
+	my( $RepCntEd ) = @_;
 	my( $RewindPtr ) = tell( $fpIn );
 	my( $LineCnt ) = $.;
 	my( $RepCnt );
@@ -1627,7 +1603,8 @@ sub RepeatOutput{
 	
 	if( $BlockNoOutput ){
 		# 非出力ブロック中は，repeat の引数に未定義のマクロが
-		# 定義されている可能性があるので，引数解析前に処理
+		# 定義されている可能性があるので，引数を解析せずに
+		# 1回だけリピート
 		ExpandRepeatOutput( $BLKMODE_REPEAT, 1 );
 		return;
 	}
@@ -1666,14 +1643,14 @@ sub RepeatOutput{
 	}
 	
 	my $PrevRepCnt;
-	$PrevRepCnt = $DefineTbl{ __REP_CNT__ }{ macro } if( defined( $DefineTbl{ __REP_CNT__ } ));
+	$PrevRepCnt = $DefineTbl{ __REP_VAL__ }{ macro } if( defined( $DefineTbl{ __REP_VAL__ } ));
 	
 	for(
 		$RepCnt = $RepCntSt;
 		( $RepCntSt < $RepCntEd ) ? $RepCnt < $RepCntEd : $RepCnt > $RepCntEd;
 		$RepCnt += $Step
 	){
-		AddCppMacro( '__REP_CNT__', $RepCnt, undef, 1 );
+		AddCppMacro( '__REP_VAL__', $RepCnt, undef, 1 );
 		AddCppMacro( $VarName, $RepCnt, undef, 1 ) if( defined( $VarName ));
 		
 		seek( $fpIn, $RewindPtr, $SEEK_SET );
@@ -1682,15 +1659,80 @@ sub RepeatOutput{
 	}
 	
 	if( defined( $PrevRepCnt )){
-		AddCppMacro( '__REP_CNT__', $PrevRepCnt, undef, 1 );
+		AddCppMacro( '__REP_VAL__', $PrevRepCnt, undef, 1 );
 	}else{
-		delete( $DefineTbl{ __REP_CNT__ } );
+		delete( $DefineTbl{ __REP_VAL__ } );
 	}
 	delete( $DefineTbl{ $VarName } ) if( defined( $VarName ));
 }
 
 sub IsNumber {
 	$_[ 0 ] != 0 || $_[ 0 ] =~ /^0/;
+}
+
+## foreach ##################################################################
+# syntax:
+#   #foreach( [ name: ] param [param...] )
+#      ....
+#   #endfor
+#	
+#	%d とか %{name}d でそれを置換
+
+sub ForeachOutput{
+	local( $_ ) = @_;
+	my( $RewindPtr ) = tell( $fpIn );
+	my( $LineCnt ) = $.;
+	my( $RepCnt );
+	my( $VarName );
+	
+	# パラメータを spc or , で split
+	my( @RepParam );
+	s/^\(\s*//;
+	s/\s*\)$//;
+	
+	$_ = ExpandMacro( $_, $EX_CPP );
+	
+	while( $_ ){
+		s/^[\s,]+//g;
+		
+		if( /^".*?"/ || /^\S+/ ){
+			push( @RepParam, $& );
+			$_ = $';
+		}
+	}
+	
+	# VarName を識別
+	if( $#RepParam >= 0 && $RepParam[ 0 ] =~ /(.+):$/ ){
+		$VarName = $1;
+		shift( @RepParam );
+	}
+	
+	if( $BlockNoOutput || $#RepParam < 0 ){
+		# 非出力ブロック中は，repeat の引数に未定義のマクロが
+		# 定義されている可能性があるので，引数を解析せずに
+		# 1回だけリピート
+		ExpandRepeatOutput( $BLKMODE_REPEAT, 1 );
+		return;
+	}
+	
+	my $PrevRepCnt;
+	$PrevRepCnt = $DefineTbl{ __REP_VAL__ }{ macro } if( defined( $DefineTbl{ __REP_VAL__ } ));
+	
+	foreach $RepCnt ( @RepParam ){
+		AddCppMacro( '__REP_VAL__', $RepCnt, undef, 1 );
+		AddCppMacro( $VarName, $RepCnt, undef, 1 ) if( defined( $VarName ));
+		
+		seek( $fpIn, $RewindPtr, $SEEK_SET );
+		$. = $LineCnt;
+		ExpandRepeatOutput( $BLKMODE_REPEAT );
+	}
+	
+	if( defined( $PrevRepCnt )){
+		AddCppMacro( '__REP_VAL__', $PrevRepCnt, undef, 1 );
+	}else{
+		delete( $DefineTbl{ __REP_VAL__ } );
+	}
+	delete( $DefineTbl{ $VarName } ) if( defined( $VarName ));
 }
 
 ### Exec perl ################################################################
@@ -2034,7 +2076,7 @@ sub ExpandPrintfFmtSub {
 	my $Num;
 	
 	if( !defined( $Name )){
-		$Name = '__REP_CNT__';
+		$Name = '__REP_VAL__';
 	}
 	if( !defined( $DefineTbl{ $Name } )){
 		Error( "repeat var not defined '$Name'" );
