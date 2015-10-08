@@ -2335,7 +2335,7 @@ sub DeflizeInstance {
 	my( $Module, $Param, $Inst, $OrgRtl );
 	( $Module, $Param, $Inst, $_, $OrgRtl ) = @_;
 	
-	$Inst =~ s/$Module/*/g;
+	$Inst =~ s/$Module/*/g;	#*/
 	
 	# インスタンス呼び出しっぽくなかったらそのまま返す
 	return $OrgRtl if( !/\.$CSymbol\s*\(/ );
