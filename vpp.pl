@@ -89,6 +89,7 @@ my $ResetLinePos	= 0;
 my $VppStage		= 0;
 my $bPrevLineBlank	= 1;
 my $CppOnly			= 0;
+my $Deflize			= 0;
 my @IncludeList;
 
 # 定義テーブル関係
@@ -114,7 +115,7 @@ sub main{
 	local( $_ );
 	
 	if( $#ARGV < 0 ){
-		print( "usage: vpp.pl [-vE] [-I<path>] [-D<def>[=<val>]] [-tab<width>] <Def file>\n" );
+		print( "usage: vpp.pl [-vrE] [-I<path>] [-D<def>[=<val>]] [-tab<width>] <Def file>\n" );
 		return;
 	}
 	
@@ -129,10 +130,16 @@ sub main{
 		}elsif( /^-tab(.*)/		){ $ExpandTab = 1; $TabWidth = eval( $1 );
 		}elsif( /^-/			){
 			while( s/v// ){ ++$Debug; }
-			$CppOnly = 1 if( /^-E/ );
+			$CppOnly = 1 if( /E/ );
+			$Deflize = 1 if( /r/ );
 		}else					 { last;
 		}
 		shift( @ARGV );
+	}
+	
+	if( $Deflize ){
+		Deflize( $ARGV[ 0 ]);
+		return;
 	}
 	
 	# tab 幅調整
@@ -565,18 +572,24 @@ sub StartModule{
 		}
 	}
 	
-	# 親 module の wire / port リストをget
+	RegisterModuleIO( $ModuleName, $CppFile, $ARGV[ 0 ]);
+}
+
+# 親 module の wire / port リストをget
+
+sub RegisterModuleIO {
+	local $_;
+	my( $ModuleName, $CppFile, $DispFile ) = @_;
+	my( $InOut, $BitWidth, @IOList, $Port, $Attr );
 	
-	@ModuleIO = GetModuleIO( $ModuleName, $CppFile, $ARGV[ 0 ] );
+	my @ModuleIO = GetModuleIO( $ModuleName, $CppFile, $DispFile );
 	
 	# input/output 文 1 行ごとの処理
 	
 	while( $_ = shift( @ModuleIO )){
-		
 		( $InOut, $BitWidth, @IOList )	= split( /\t/, $_ );
 		
 		while( $Port = shift( @IOList )){
-			
 			$Attr = $InOut eq "input"	? $ATTR_DEF | $ATTR_IN		:
 					$InOut eq "output"	? $ATTR_DEF | $ATTR_OUT		:
 					$InOut eq "inout"	? $ATTR_DEF | $ATTR_INOUT	:
@@ -1892,9 +1905,13 @@ sub Require {
 
 sub TabSpace {
 	local $_;
-	my( $Width, $TabWidth ) = @_;
-	( $_, $Width, $TabWidth ) = @_;
-	$_ . "\t" x int(( $Width - length( $_ ) + $TabWidth - 1 ) / $TabWidth );
+	my( $Width, $TabWidth, $ForceSplit );
+	( $_, $Width, $TabWidth, $ForceSplit ) = @_;
+	
+	my $TabNum = int(( $Width - length( $_ ) + $TabWidth - 1 ) / $TabWidth );
+	$TabNum = 1 if( $ForceSplit && $TabNum == 0 );
+	
+	$_ . "\t" x $TabNum;
 }
 
 ### CPP directive 処理 #######################################################
@@ -2194,6 +2211,162 @@ sub ExpandEnvSub {
 	s/[\}\)]$//;
 	
 	$ENV{ $_ } || $org;
+}
+
+### RTL→def 化 ##############################################################
+
+my %DeflizeDelPort;
+
+sub Deflize {
+	local( $_ ) = '';
+	my( $FileName ) = @_;
+	my $fpIn;
+	my $Buf;
+	
+	if( !open( $fpIn, "< $FileName" )){
+		Error( "can't open file \"$FileName\"" );
+		return;
+	}
+	while( $Buf = ReadLine( $fpIn )){
+		$_ .= $Buf;
+	}
+	close( $fpIn );
+	
+	s/(\bmodule\b.*?\bendmodule\b)/&DeflizeModule( $1, $FileName )/ges;
+	
+	# ソース整形
+	s/\b(always\s*@\s*$OpenClose)/&DeflizeAlways( $1 )/ges;
+	s/^[\t ]*\n(?:[\t ]*\n)+/\n/gm;
+	
+	if( !( $FileName =~ s/(.+)\.(.+)/$1.def.$2/ )){
+		$FileName .= ".def";
+	}
+	
+	open( fpOut, "> $FileName" );
+	print( fpOut ExpandMacro( $_, $EX_STR | $EX_COMMENT ));
+	close( fpOut );
+}
+
+### module 毎の処理
+
+sub DeflizeModule {
+	local( $_ );
+	my $FileName;
+	( $_, $FileName ) = @_;
+	
+	# モジュール名
+	/module\s+($CSymbol)/;
+	my $ModuleName = $1;
+	
+	# モジュール IO 解析
+	RegisterModuleIO( $ModuleName, $FileName );
+	
+	# ポート宣言は消す
+	s/(\bmodule\s+$CSymbol)\s*\(.*?\);/$1<__PORT_DECL__>/s;
+	
+	# IO とそれ以外に分離
+	s/<__PORT_DECL__>(.*(?:input|output|inout)\b.*?\n)/<__PORT_DECL__>/s;
+	my $IoDecl = $1;
+	$IoDecl =~ s/^\s*(?:reg|wire)\b.*\n//gm;
+	$IoDecl =~ s/;/,/g;
+	$IoDecl =~ s/(.*),/$1/s;
+	$IoDecl =~ s/^\s*(<__COMMENT_)/\t$1/gm;
+	$IoDecl =~ s/^\s+//g;
+	
+	s/<__PORT_DECL__>/(\n$IoDecl);/;
+	
+	# インスタンス呼び出しを def 化
+	s/^([ \t]*\b($CSymbol)\s+(#$OpenClose\s+)?($CSymbol)\s*($OpenClose)\s*;)/&DeflizeInstance( $2, $3, $4, $5, $1 )/gesm;
+	
+	# ソース整形
+	s/^(<__COMMENT_)/\t$1/gm;
+	
+	# IO, wire を一行ずつ処理
+	my @Buf = split( /\n/, $_ );
+	my $Buf = '';
+	
+	my( $Type, $Width, $Name, $Eol, $Comment );
+	foreach $_ ( @Buf ){
+		if( /^\s*($SigTypeDef)\s*(\[.+?\])?\s*(($CSymbol)\s*([,;]?).*)/ ){
+			( $Type, $Width, $Name, $Eol, $Comment ) = ( $1, $2, $4, $5, $3 );
+			
+			if(
+				# output + reg で reg の方を削除
+				$Type eq 'reg' && $WireList{ $Name } &&
+				( $WireList{ $Name }{ attr } & $ATTR_OUT ) ||
+				
+				# 自動生成ワイヤを削除
+				$Type eq 'wire' && $DeflizeDelPort{ $Name }
+			){
+				next;
+			}
+			
+			# output + reg で output を output reg に変更
+			if(
+				$Type eq 'output' && $WireList{ $Name } &&
+				( $WireList{ $Name }{ attr } & $ATTR_REF )	# reg 宣言された
+			){
+				$Type = 'output reg';
+			}
+			
+			$_ = "\t" .
+				TabSpace( $Type, $TabWidthType, $TabWidth ) .
+				TabSpace( $Width || '', $TabWidthBit,  $TabWidth ) .
+				"$Comment";
+		}
+		
+		$Buf .= "$_\n";
+	}
+	
+	$Buf =~ s/\n$//;
+	$Buf;
+}
+
+# instance 毎の処理
+
+sub DeflizeInstance {
+	local $_;
+	my( $Module, $Param, $Inst, $OrgRtl );
+	( $Module, $Param, $Inst, $_, $OrgRtl ) = @_;
+	
+	# インスタンス呼び出しっぽくなかったらそのまま返す
+	return $OrgRtl if( !/\.$CSymbol\s*\(/ );
+	
+	# 整形
+	s/<__.*?__>/ /g;
+	s/\s+/ /g;
+	s/(\W) +/$1/g;
+	s/ +(\W)/$1/g;
+	s/^\((.*)\)$/$1/g;
+	s/^\.//;
+	
+	my @ConnList = split( /,\./, $_ );
+	
+	# 結線リストごとに処理
+	my $ConnListDef;
+	
+	foreach $_ ( @ConnList ){
+		/^($CSymbol)\((.*)\)/;
+		
+		if( $2 eq '' ){
+			$ConnListDef .= "\t\t" . TabSpace( "$1", 40, $TabWidth, 1 ) . "NC\n";
+		}elsif( $1 ne $2 ){
+			$ConnListDef .= "\t\t" . TabSpace( "$1", 20, $TabWidth, 1 ) . "$2\n";
+		}
+		
+		# 自動生成ワイヤの削除予約
+		$_ = $2;
+		s/\[.*?\]//g;
+		$DeflizeDelPort{ $_ } = 1 if( /^$CSymbol$/ );
+	}
+	
+	return "\tinstance $Module " . ( $Param || '' ) . "$Inst * (\n" . $ConnListDef . "\t);";
+}
+
+sub DeflizeAlways {
+	local( $_ ) = @_;
+	
+	return /\b(?:pos|neg)edge\b/ ? $_ : "always@( * )";
 }
 
 ##############################################################################
