@@ -821,10 +821,7 @@ sub DefineInst{
 		ExpandEnv( $4 )
 	);
 	$ModuleParam = '' if( !defined( $ModuleParam ));
-	
-	if( $ModuleInst eq "*" ){
-		$ModuleInst = $ModuleName;
-	}
+	$ModuleInst =~ s/\*/$ModuleName/g;
 	
 	if( $ModuleFile eq "*" ){
 		$ModuleFile = $CppFile;
@@ -2337,6 +2334,8 @@ sub DeflizeInstance {
 	local $_;
 	my( $Module, $Param, $Inst, $OrgRtl );
 	( $Module, $Param, $Inst, $_, $OrgRtl ) = @_;
+	
+	$Inst =~ s/$Module/*/g;
 	
 	# インスタンス呼び出しっぽくなかったらそのまま返す
 	return $OrgRtl if( !/\.$CSymbol\s*\(/ );
