@@ -2262,18 +2262,25 @@ sub DeflizeModule {
 	RegisterModuleIO( $ModuleName, $FileName );
 	
 	# ポート宣言は消す
-	s/(\bmodule\s+$CSymbol)\s*\(.*?\);/$1<__PORT_DECL__>/s;
+	my $V2KPortDef = 0;
+	/\bmodule\s+$CSymbol\s*\((.*?)\);/s;
 	
-	# IO とそれ以外に分離
-	s/<__PORT_DECL__>(.*(?:input|output|inout)\b.*?\n)/<__PORT_DECL__>/s;
-	my $IoDecl = $1;
-	$IoDecl =~ s/^\s*(?:reg|wire)\b.*\n//gm;
-	$IoDecl =~ s/;/,/g;
-	$IoDecl =~ s/(.*),/$1/s;
-	$IoDecl =~ s/^\s*(<__COMMENT_)/\t$1/gm;
-	$IoDecl =~ s/^\s+//g;
-	
-	s/<__PORT_DECL__>/(\n$IoDecl);/;
+	if(	$1 =~ /$SigTypeDef/ ){
+		$V2KPortDef = 1;
+	}else{
+		s/(\bmodule\s+$CSymbol)\s*\(.*?\);/$1<__PORT_DECL__>/s;
+		
+		# IO とそれ以外に分離
+		s/<__PORT_DECL__>(.*(?:input|output|inout)\b.*?\n)/<__PORT_DECL__>/s;
+		my $IoDecl = $1;
+		$IoDecl =~ s/^\s*(?:reg|wire)\b.*\n//gm;
+		$IoDecl =~ s/;/,/g;
+		$IoDecl =~ s/(.*),/$1/s;
+		$IoDecl =~ s/^\s*(<__COMMENT_)/\t$1/gm;
+		$IoDecl =~ s/^\s+//g;
+		
+		s/<__PORT_DECL__>/(\n$IoDecl);/;
+	}
 	
 	# インスタンス呼び出しを def 化
 	s/^([ \t]*\b($CSymbol)\s+(#$OpenClose\s+)?($CSymbol)\s*($OpenClose)\s*;)/&DeflizeInstance( $2, $3, $4, $5, $1 )/gesm;
@@ -2287,11 +2294,12 @@ sub DeflizeModule {
 	
 	my( $Type, $Width, $Name, $Eol, $Comment );
 	foreach $_ ( @Buf ){
-		if( /^\s*($SigTypeDef)\s*(\[.+?\])?\s*(($CSymbol)\s*([,;]?).*)/ ){
-			( $Type, $Width, $Name, $Eol, $Comment ) = ( $1, $2, $4, $5, $3 );
+		if( /^\s*($SigTypeDef)\s*(\[.+?\])?\s*($CSymbol)\s*([,;]?)(.*)/ ){
+			( $Type, $Width, $Name, $Eol, $Comment ) = ( $1, $2, $3, $4, $5 );
 			
 			if(
 				# output + reg で reg の方を削除
+				!$V2KPortDef &&
 				$Type eq 'reg' && $WireList{ $Name } &&
 				( $WireList{ $Name }{ attr } & $ATTR_OUT ) ||
 				
@@ -2303,6 +2311,7 @@ sub DeflizeModule {
 			
 			# output + reg で output を output reg に変更
 			if(
+				!$V2KPortDef &&
 				$Type eq 'output' && $WireList{ $Name } &&
 				( $WireList{ $Name }{ attr } & $ATTR_REF )	# reg 宣言された
 			){
@@ -2312,7 +2321,7 @@ sub DeflizeModule {
 			$_ = "\t" .
 				TabSpace( $Type, $TabWidthType, $TabWidth ) .
 				TabSpace( $Width || '', $TabWidthBit,  $TabWidth ) .
-				"$Comment";
+				"$Name$Eol$Comment";
 		}
 		
 		$Buf .= "$_\n";
