@@ -821,6 +821,7 @@ sub DefineInst{
 		ExpandEnv( $4 )
 	);
 	$ModuleParam = '' if( !defined( $ModuleParam ));
+	$_ = $5;
 	$ModuleInst =~ s/\*/$ModuleName/g;
 	
 	if( $ModuleFile eq "*" ){
@@ -829,7 +830,7 @@ sub DefineInst{
 	
 	# read port->wire tmpl list
 	
-	ReadSkelList() if( $5 eq "(" );
+	ReadSkelList() if( $_ eq "(" );
 	
 	# instance の header を出力
 	
