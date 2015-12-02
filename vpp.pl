@@ -777,6 +777,8 @@ sub PrintRTL{
 #		O		ポートタイプを強制的に output にする
 #		IO		ポートタイプを強制的に inout にする
 #		*D		無視
+#
+#		$l1 $u1	大文字・小文字変換
 
 sub DefineInst{
 	local( $_ ) = @_;
@@ -1283,14 +1285,21 @@ sub ConvPort2Wire {
 	$Wire =  $SkelWire;
 	$Port =~ /^$SkelPort$/;
 	
-	my( $tmp1, $tmp2, $tmp3, $tmp4 ) = ( $1, $2, $3, $4 );
-	
-	$Wire =~ s/\$1/$tmp1/g;
-	$Wire =~ s/\$2/$tmp2/g;
-	$Wire =~ s/\$3/$tmp3/g;
-	$Wire =~ s/\$4/$tmp4/g;
+	my( $grp ) = [ $1, $2, $3, $4, $5, $6, $7, $8, $9 ];
+	$Wire =~ s/\$([lu]?\d)/ReplaceGroup( $1, $grp )/ge;
 	
 	return( $Wire, $Attr );
+}
+
+sub ReplaceGroup {
+	my( $grp );
+	( $_, $grp ) = @_;
+	
+	/([lu]?)(\d)/;
+	$_ = $grp->[ $2 - 1 ];
+	
+	return	$1 eq 'l' ? lc( $_ ) :
+			$1 eq 'u' ? uc( $_ ) : $_;
 }
 
 ### wire の登録 ##############################################################
