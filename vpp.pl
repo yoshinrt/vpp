@@ -525,7 +525,7 @@ sub StartModule{
 	
 	# module hoge #( ... ) 形式の parameter 認識
 	if( /^(\s*#)(\([\s\S]*)/ ){
-		( $ParamDef, $_ ) = ( $1, $2 );
+		( $ParamDef, $_ ) = ( $1, "$2\n" );
 		$_ = GetFuncArg( $fpIn, $_ );
 		
 		/^($OpenClose\s*)([\s\S]*)/;
