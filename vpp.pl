@@ -524,13 +524,13 @@ sub StartModule{
 	#SkipToSemiColon( $_ );
 	
 	# module hoge #( ... ) 形式の parameter 認識
-	if( /^(\s*#)(\(.*)/ ){
-		( $ParamDef, $_ ) = ( $1, "($'\n" );
+	if( /^(\s*#)(\([\s\S]*)/ ){
+		( $ParamDef, $_ ) = ( $1, $2 );
 		$_ = GetFuncArg( $fpIn, $_ );
 		
-		/^($OpenClose\s*)/;
+		/^($OpenClose\s*)([\s\S]*)/;
 		$ParamDef .= $1;
-		$_ = $';
+		$_ = $2;
 	}
 	
 	# ); まで読む 何か読めたらそれをポートリストとみなす
@@ -736,8 +736,9 @@ sub PrintRTL{
 		s/^([ \t]*\n)([ \t]*\n)+/$1/gm;
 	}else{
 		if( $ResetLinePos ){
+			# ここは根拠がわからない，まだバグってるかも
 			if( $ResetLinePos == $. ){
-				$_ .= sprintf( "# %d \"$DefFile\"\n", $. );
+				$_ .= sprintf( "# %d \"$DefFile\"\n", $. + 1 );
 			}else{
 				$_ = sprintf( "# %d \"$DefFile\"\n", $. ) . $_;
 			}
@@ -811,7 +812,7 @@ sub DefineInst{
 		$_ = $tmp . GetFuncArg( $fpIn, $2 . "\n" );
 	}
 	
-	if( !/\s+([\w\d]+)(\s+#\([^\)]+\))?\s+(\S+)\s+"?(\S+)"?\s*([\(;])/s ){
+	if( !/\s+([\w\d]+)(\s+#$OpenClose)?\s+(\S+)\s+"?(\S+)"?\s*([\(;])/s ){
 		Error( "syntax error (instance)" );
 		return;
 	}
@@ -1030,16 +1031,16 @@ sub DeleteExceptPort{
 	
 	s/\boutput\s+reg\b/output/g;
 	
-	if( /^($SigTypeDef)\s*/ ){
+	if( /^($SigTypeDef)\s*([\s\S]*)/ ){
 		
 		my( $Type ) = $1 eq 'parameter' ? 'wire' : $1;
 		my( $Width ) = '';
 		
-		$_ = $';
+		$_ = $2;
 		
 		# バス幅不明の時は [?] というものあり
-		if( /^\[(.+?)\]\s*/ ){
-			( $_, $tmp ) = ( $1, $' );
+		if( /^\[(.+?)\]\s*([\s\S]*)/ ){
+			( $_, $tmp ) = ( $1, $2 );
 			
 			s/^\s+//;
 			s/\s+$//;
@@ -1632,9 +1633,9 @@ sub RepeatOutput{
 	$RepCntEd = ExpandMacro( $RepCntEd, $EX_CPP | $EX_STR );
 	
 	# VarName を識別
-	if( $RepCntEd =~ /\s*\(\s*(\w+)\s*:/ ){
+	if( $RepCntEd =~ /\s*\(\s*(\w+)\s*:([\s\S]*)/ ){
 		$VarName = $1;
-		$RepCntEd = "($'";
+		$RepCntEd = "($2";
 	}
 	
 	( $RepCntSt, $RepCntEd, $Step ) = Evaluate2( $RepCntEd );
@@ -1715,9 +1716,9 @@ sub ForeachOutput{
 	while( $_ ){
 		s/^[\s,]+//g;
 		
-		if( /^".*?"/ || /^\S+/ ){
-			push( @RepParam, $& );
-			$_ = $';
+		if( /^(".*?")([\s\S]*)/ || /^(\S+)([\s\S]*)/ ){
+			push( @RepParam, $1 );
+			$_ = $2;
 		}
 	}
 	
@@ -1977,9 +1978,9 @@ sub ExpandMacro {
 			$bReplaced = 0;
 			$Line = '';
 			
-			while( /\b($CSymbol)\b(.*)/s ){
-				$Line .= $`;
-				( $Name, $_ ) = ( $1, $2 );
+			while( /(.*?)\b($CSymbol)\b(.*)/s ){
+				$Line .= $1;
+				( $Name, $_ ) = ( $2, $3 );
 				
 				if( $Name eq '__FILE__' ){		$Line .= $DefFile;
 				}elsif( $Name eq '__LINE__' ){	$Line .= $.;
