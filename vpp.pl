@@ -441,7 +441,7 @@ sub ExpandRepeatOutput {
 				}elsif( /^include\s*(.*)/ ){
 					Include( $1 );
 				}elsif( /^require\s+(.*)/ ){
-					Require( $1 );
+					Require( ExpandMacro( $1, $EX_INTFUNC | $EX_STR | $EX_RMCOMMENT ));
 				}elsif( !$BlockNoOutput ){
 					PrintRTL( ExpandMacro( $_, $EX_CPP | $EX_REP ));
 				}
