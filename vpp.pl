@@ -1012,6 +1012,7 @@ sub GetModuleIO{
 	# split
 	#print if( $Debug );
 	s/\boutreg\b/output reg/g;
+	s/\b((?:in|out)put)\s+wire\b/$1/g;
 	s/($SigTypeDef)/\n$1/g;
 	s/ *[;\)].*//g;
 	
