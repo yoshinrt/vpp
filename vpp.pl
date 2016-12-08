@@ -1843,13 +1843,10 @@ sub Enumerate{
 	
 	# get typedef name
 	
-		print( "$_:zzzhoge\n" );
 	if( /(.+)({.*)/ ){
-		print( "$_:hoge\n" );
 		$TypeName	= $1;
 		$_			= $2;
 	}else{
-		print( "$_:fuga\n" );
 		$TypeName	= '';
 	}
 	
