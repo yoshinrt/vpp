@@ -1870,7 +1870,7 @@ sub Enumerate{
 	# enum list ╓н define ╫пно
 	for( $i = 0; $i <= $#EnumList; ++$i ){
 		if( $bParam ){
-			PrintRTL( "\tparameter\t$EnumList[ $i ]\t= $BitWidth\'d$i;\n" );
+			PrintRTL( "\tlocalparam\t$EnumList[ $i ]\t= $BitWidth\'d$i;\n" );
 		}else{
 			AddCppMacro( $EnumList[ $i ], "$BitWidth\'d$i" );
 		}
