@@ -2166,7 +2166,7 @@ sub Include {
 	local( $_ ) = @_;
 	
 	$_ = ExpandMacro( $_, $EX_CPP | $EX_STR | $EX_NOREAD );
-	$_ = $1 if( /"(.*?)"/ );
+	$_ = $1 if( /"(.*?)"/ || /<(.*?)>/ );
 	
 	push(
 		@IncludeList, {
