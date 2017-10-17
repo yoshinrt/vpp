@@ -4,7 +4,7 @@
 #
 #		vpp -- verilog preprocessor		Ver.1.10
 #		Copyright(C) by DDS
-#		$Id$
+#		$Id: vpp.pl 56 2017-01-15 06:30:23Z yoshi $
 #
 ##############################################################################
 
@@ -51,6 +51,7 @@ my $MODMODE_NORMAL	= $enum;
 my $MODMODE_TEST	= $enum <<= 1;
 my $MODMODE_INC		= $enum <<= 1;
 my $MODMODE_TESTINC	= $MODMODE_TEST | $MODMODE_INC;
+my $MODMODE_PROGRAM	= $enum <<= 1;
 
 my $CSymbol			= qr/\b[_a-zA-Z]\w*\b/;
 my $CSymbol2		= qr/\b[_a-zA-Z\$]\w*\b/;
@@ -474,18 +475,23 @@ sub MultiLineParser {
 			ExpandMacro( $_, $EX_INTFUNC | $EX_STR | $EX_RMCOMMENT )
 		);
 		
-		if    ( $Word eq 'module'			){ StartModule( $Line );
+		if    ( $Word eq 'module'			){ StartModule( $Line, $MODMODE_NORMAL );
 		}elsif( $Word eq 'module_inc'		){ StartModule( $Line, $MODMODE_INC );
 		}elsif( $Word eq 'testmodule'		){ StartModule( $Line, $MODMODE_TEST );
 		}elsif( $Word eq 'testmodule_inc'	){ StartModule( $Line, $MODMODE_TESTINC );
 		}elsif( $Word eq 'endmodule'		){ EndModule( $_ );
+		}elsif( $Word eq 'program'			){ StartModule( $Line, $MODMODE_PROGRAM | $MODMODE_NORMAL );
+		}elsif( $Word eq 'program_inc'		){ StartModule( $Line, $MODMODE_PROGRAM | $MODMODE_INC );
+		}elsif( $Word eq 'testprogram'		){ StartModule( $Line, $MODMODE_PROGRAM | $MODMODE_TEST );
+		}elsif( $Word eq 'testprogram_inc'	){ StartModule( $Line, $MODMODE_PROGRAM | $MODMODE_TESTINC );
+		}elsif( $Word eq 'endprogram'		){ EndModule( $_ );
 		}elsif( $Word eq 'instance'			){ DefineInst( $Line );
 		}elsif( $Word eq '$wire'			){ DefineDefWireSkel( $Line );
 		}elsif( $Word eq '$header'			){ OutputHeader();
 		}elsif( $Word eq '$AllInputs'		){ PrintAllInputs( $Line, $_ );
 		}else{
-			if( $Word eq '_module' || $Word eq '_endmodule' ){
-				$_ =~ s/\b_((?:end)?module)\b/$1/;
+			if( $Word =~ /^_(?:end)?(?:module|program)$/ ){
+				$_ =~ s/\b_((?:end)?(?:module|program))\b/$1/;
 			}
 			PrintRTL( ExpandMacro( $_, $EX_INTFUNC | $EX_STR | $EX_COMMENT ));
 		}
@@ -511,9 +517,8 @@ sub StartModule{
 	
 	@WireList	= ();
 	%WireList	= ();
-	$iModuleMode	= $MODMODE_NORMAL if( !defined( $iModuleMode ));
-	$PortDef		= '';
-	$ParamDef		= '';
+	$PortDef	= '';
+	$ParamDef	= '';
 	
 	$PrintBuf	= \$RTLBuf;
 	$RTLBuf		= "";
@@ -630,9 +635,9 @@ sub EndModule{
 	
 	$bFirst = 1;
 	PrintRTL( '//' ) if( $iModuleMode & $MODMODE_INC );
-	PrintRTL( "module $ModuleName" );
+	PrintRTL(( $iModuleMode & $MODMODE_PROGRAM ? 'program' : 'module' ) . " $ModuleName" );
 	
-	if( $iModuleMode == $MODMODE_NORMAL ){
+	if( $iModuleMode & $MODMODE_NORMAL ){
 		
 		my( $PortDef2 ) = '';
 		
@@ -981,11 +986,11 @@ sub GetModuleIO{
 	while( $_ = ReadLine( $fp )){
 		if( $bFound ){
 			# module の途中
-			last if( /\bendmodule\b/ );
+			last if( /\bend(?:module|program)\b/ );
 			$Buf .= ExpandMacro( $_, $EX_INTFUNC | $EX_RMSTR | $EX_RMCOMMENT | $EX_NOSIGINFO );
 		}else{
 			# module をまだ見つけていない
-			if( /\b(?:test)?module(?:_inc)?\s+(.+)/ ){
+			if( /\b(?:test)?(?:module|program)(?:_inc)?\s+(.+)/ ){
 				$_ = ExpandMacro( $1, $EX_INTFUNC | $EX_NOREAD | $EX_NOSIGINFO );
 				$bFound = 1 if( /^$ModuleName\b/ );
 			}
