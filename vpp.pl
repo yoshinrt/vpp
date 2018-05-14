@@ -32,7 +32,6 @@ my $BLKMODE_NORMAL	= $enum++;	# ブロック外
 my $BLKMODE_REPEAT	= $enum++;	# repeat ブロック
 my $BLKMODE_PERL	= $enum++;	# perl ブロック
 my $BLKMODE_IF		= $enum++;	# if ブロック
-my $BLKMODE_ELSE	= $enum++;	# else ブロック
 
 $enum = 1;
 my $EX_CPP			= $enum;		# CPP マクロ展開
@@ -42,7 +41,7 @@ my $EX_STR			= $enum <<= 1;	# 文字列リテラル
 my $EX_RMSTR		= $enum <<= 1;	# 文字列リテラル削除
 my $EX_COMMENT		= $enum <<= 1;	# コメント
 my $EX_RMCOMMENT	= $enum <<= 1;	# コメント削除
-my $EX_NOREAD		= $enum <<= 1;	# $fpIn から追加読み込みしない
+my $EX_NOREAD		= $enum <<= 1;	# $fpIn から追加読み込みしない ★機能していない
 my $EX_NOSIGINFO	= $enum <<= 1;	# %WireList 参照不可
 
 $enum = 1;
@@ -227,7 +226,7 @@ sub ReadLine {
 	my( $Line );
 	my( $LineCnt ) = $.;
 	
-	while( m@(//#?|/\*|(?<!\\)")@ ){
+	while( m@(//|/\*|(?<!\\)")@ ){
 		$Cnt = $#CommentPool + 1;
 		
 		if( $1 eq '//' ){
@@ -375,10 +374,7 @@ sub ExpandRepeatOutput {
 				}
 			}elsif( /^endif\b/ ){
 				# endif
-				if(
-					$BlockMode != $BLKMODE_IF &&
-					$BlockMode != $BLKMODE_ELSE
-				){
+				if( $BlockMode != $BLKMODE_IF ){
 					Error( "unexpected #endif" );
 				}else{
 					last;
@@ -456,7 +452,6 @@ sub ExpandRepeatOutput {
 		if(     $BlockMode == $BLKMODE_REPEAT	){ Error( "unterminated #repeat",	$LineCnt );
 		}elsif( $BlockMode == $BLKMODE_PERL		){ Error( "unterminated #perl",		$LineCnt );
 		}elsif( $BlockMode == $BLKMODE_IF		){ Error( "unterminated #if",		$LineCnt );
-		}elsif( $BlockMode == $BLKMODE_ELSE		){ Error( "unterminated #else",		$LineCnt );
 		}
 	}
 	
