@@ -43,6 +43,7 @@ my $EX_COMMENT		= $enum <<= 1;	# コメント
 my $EX_RMCOMMENT	= $enum <<= 1;	# コメント削除
 my $EX_NOREAD		= $enum <<= 1;	# $fpIn から追加読み込みしない ★機能していない
 my $EX_NOSIGINFO	= $enum <<= 1;	# %WireList 参照不可
+my $EX_IF_EVAL		= $enum <<= 1;	# ifdef 用，defined 展開，存在しないシンボルは 0 に変換
 
 $enum = 1;
 my $MODMODE_NONE	= 0;
@@ -1945,8 +1946,7 @@ sub IfBlockEval {
 	local( $_ ) = @_;
 	
 	# defined 置換
-	s/\bdefined\s+($CSymbol)/defined( $DefineTbl{ $1 } ) ? 1 : 0/ge;
-	return Evaluate( ExpandMacro( $_, $EX_CPP | $EX_STR | $EX_NOREAD ));
+	return Evaluate( ExpandMacro( $_, $EX_CPP | $EX_STR | $EX_NOREAD | $EX_IF_EVAL ));
 }
 
 ### CPP マクロ展開 ###########################################################
@@ -1982,9 +1982,17 @@ sub ExpandMacro {
 				
 				if( $Name eq '__FILE__' ){		$Line .= $DefFile;
 				}elsif( $Name eq '__LINE__' ){	$Line .= $.;
+				}elsif(
+					$Name eq 'defined' && $EX_IF_EVAL &&
+					( s/^\s*($CSymbol)\b// || s/^s*\(\s*($CSymbol)\s*\)// )
+				){
+					# defined マクロ
+					$Line .= defined( $DefineTbl{ $1 } ) ? '1' : '0';
+					
 				}elsif( !defined( $DefineTbl{ $Name } )){
 					# マクロではない
-					$Line .= $Name;
+					# if 用の eval の場合，，未定義シンボルは 0 に変換
+					$Line .= ( $Mode & $EX_IF_EVAL ) ? '0' : $Name;
 				}elsif( $DefineTbl{ $Name }{ args } eq 's' ){
 					# 単純マクロ
 					$Line .= $DefineTbl{ $Name }{ macro };
