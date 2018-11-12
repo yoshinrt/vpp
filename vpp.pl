@@ -4,7 +4,6 @@
 #
 #		vpp -- verilog preprocessor		Ver.1.10
 #		Copyright(C) by DDS
-#		$Id: vpp.pl 56 2017-01-15 06:30:23Z yoshi $
 #
 ##############################################################################
 
@@ -161,7 +160,7 @@ sub main{
 	$fpIn		= DATA;
 	$PrintBuf	= \$RTLBuf;
 	$RTLBuf		= "";
-	ExpandRepeatOutput();
+	CppParser();
 	undef( $PrintBuf );
 	undef( $RTLBuf );
 	undef( $fpIn );
@@ -174,7 +173,7 @@ sub main{
 	
 	open( $fpOut, "> $CppFile" );
 	
-	ExpandRepeatOutput();
+	CppParser();
 	
 	if( $Debug >= 2 ){
 		print( "=== macro ===\n" );
@@ -209,7 +208,7 @@ sub main{
 			open( $fpOut, "> $RTLFile" );
 		
 		$VppStage = 1;
-		MultiLineParser();
+		VppParser();
 		
 		close( $fpOut );
 		close( $fpIn );
@@ -298,7 +297,7 @@ sub GetFuncArg {
 
 ### Start of the module #####################################################
 
-sub ExpandRepeatOutput {
+sub CppParser {
 	my( $BlockMode, $bNoOutput ) = @_;
 	$BlockMode	= 0 if( !defined( $BlockMode ));
 	$bNoOutput	= 0 if( !defined( $bNoOutput ));
@@ -344,11 +343,11 @@ sub ExpandRepeatOutput {
 			# $DefineTbl{ $1 }{ macro }:  マクロ定義本体
 			
 			if( /^ifdef\b(.*)/ ){
-				ExpandRepeatOutput( $BLKMODE_IF, !IfBlockEval( "defined $1" ));
+				CppParser( $BLKMODE_IF, !IfBlockEval( "defined $1" ));
 			}elsif( /^ifndef\b(.*)/ ){
-				ExpandRepeatOutput( $BLKMODE_IF,  IfBlockEval( "defined $1" ));
+				CppParser( $BLKMODE_IF,  IfBlockEval( "defined $1" ));
 			}elsif( /^if\b(.*)/ ){
-				ExpandRepeatOutput( $BLKMODE_IF, !IfBlockEval( $1 ));
+				CppParser( $BLKMODE_IF, !IfBlockEval( $1 ));
 			}elsif( /^elif\b(.*)/ ){
 				if( $BlockMode != $BLKMODE_IF ){
 					Error( "unexpected #elif" );
@@ -462,7 +461,7 @@ sub ExpandRepeatOutput {
 
 ### マルチラインパーザ #######################################################
 
-sub MultiLineParser {
+sub VppParser {
 	local( $_ );
 	my( $Line, $Word );
 	
@@ -1628,7 +1627,7 @@ sub RepeatOutput{
 		# 非出力ブロック中は，repeat の引数に未定義のマクロが
 		# 定義されている可能性があるので，引数を解析せずに
 		# 1回だけリピート
-		ExpandRepeatOutput( $BLKMODE_REPEAT, 1 );
+		CppParser( $BLKMODE_REPEAT, 1 );
 		return;
 	}
 	
@@ -1661,7 +1660,7 @@ sub RepeatOutput{
 	
 	# リピート数 <= 0 時の対策
 	if( $RepCntSt == $RepCntEd ){
-		ExpandRepeatOutput( $BLKMODE_REPEAT, 1 );
+		CppParser( $BLKMODE_REPEAT, 1 );
 		return;
 	}
 	
@@ -1678,7 +1677,7 @@ sub RepeatOutput{
 		
 		seek( $fpIn, $RewindPtr, $SEEK_SET );
 		$. = $LineCnt;
-		ExpandRepeatOutput( $BLKMODE_REPEAT );
+		CppParser( $BLKMODE_REPEAT );
 	}
 	
 	if( defined( $PrevRepCnt )){
@@ -1734,7 +1733,7 @@ sub ForeachOutput{
 		# 非出力ブロック中は，repeat の引数に未定義のマクロが
 		# 定義されている可能性があるので，引数を解析せずに
 		# 1回だけリピート
-		ExpandRepeatOutput( $BLKMODE_REPEAT, 1 );
+		CppParser( $BLKMODE_REPEAT, 1 );
 		return;
 	}
 	
@@ -1747,7 +1746,7 @@ sub ForeachOutput{
 		
 		seek( $fpIn, $RewindPtr, $SEEK_SET );
 		$. = $LineCnt;
-		ExpandRepeatOutput( $BLKMODE_REPEAT );
+		CppParser( $BLKMODE_REPEAT );
 	}
 	
 	if( defined( $PrevRepCnt )){
@@ -1772,7 +1771,7 @@ sub ExecPerl {
 	$PrintBuf = \$PerlBuf;
 	
 	# perl code 取得
-	ExpandRepeatOutput( $BLKMODE_PERL );
+	CppParser( $BLKMODE_PERL );
 	$PrintBuf = $PrevPrintBuf;
 	
 	$PerlBuf =~ s/^\s*#.*$//gm;
@@ -2192,7 +2191,7 @@ sub Include {
 		$DefFile = $_;
 		PrintRTL( "# 1 \"$_\"\n" );
 		print( "including file '$_'...\n" ) if( $Debug >= 2 );
-		ExpandRepeatOutput();
+		CppParser();
 		printf( "back to file '%s'...\n", $IncludeList[ $#IncludeList ]->{ FileName } ) if( $Debug >= 2 );
 	}
 	
