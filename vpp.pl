@@ -41,7 +41,7 @@ my $EX_RMSTR		= $enum <<= 1;	# 文字列リテラル削除
 my $EX_COMMENT		= $enum <<= 1;	# コメント
 my $EX_RMCOMMENT	= $enum <<= 1;	# コメント削除
 my $EX_NOREAD		= $enum <<= 1;	# $fpIn から追加読み込みしない ★機能していない
-my $EX_NOSIGINFO	= $enum <<= 1;	# %WireList 参照不可
+my $EX_NOSIGINFO	= $enum <<= 1;	# $WireListHash 参照不可
 my $EX_IF_EVAL		= $enum <<= 1;	# ifdef 用，defined 展開，存在しないシンボルは 0 に変換
 
 $enum = 1;
@@ -79,7 +79,7 @@ my( $DefFile, $RTLFile, $ListFile, $CppFile );
 my $PrintBuf;
 my $RTLBuf;
 my $PerlBuf;
-my $ModuleName;
+my $CurModuleName;
 my $ExpandTab;
 my $BlockNoOutput	= 0;
 my $BlockRepeat		= 0;
@@ -93,8 +93,8 @@ my $Deflize			= 0;
 my @IncludeList;
 
 # 定義テーブル関係
-my @WireList;
-my %WireList;
+my $WireList;
+my $WireListHash;
 my @SkelList;
 my $iModuleMode;
 my $PortDef;
@@ -510,15 +510,13 @@ sub StartModule{
 	
 	# wire list 初期化
 	
-	@WireList	= ();
-	%WireList	= ();
 	$PortDef	= '';
 	$ParamDef	= '';
 	
 	$PrintBuf	= \$RTLBuf;
 	$RTLBuf		= "";
 	
-	( $ModuleName, $_ ) = GetWord( ExpandMacro( $_, $EX_INTFUNC | $EX_RMCOMMENT | $EX_NOREAD ));
+	( $CurModuleName, $_ ) = GetWord( ExpandMacro( $_, $EX_INTFUNC | $EX_RMCOMMENT | $EX_NOREAD ));
 	
 	#PrintRTL( SkipToSemiColon( $_ ));
 	#SkipToSemiColon( $_ );
@@ -572,7 +570,7 @@ sub StartModule{
 		}
 	}
 	
-	RegisterModuleIO( $ModuleName, $CppFile, $ARGV[ 0 ]);
+	RegisterModuleIO( $CurModuleName, $CppFile, $ARGV[ 0 ]);
 }
 
 # 親 module の wire / port リストをget
@@ -630,13 +628,13 @@ sub EndModule{
 	
 	$bFirst = 1;
 	PrintRTL( '//' ) if( $iModuleMode & $MODMODE_INC );
-	PrintRTL(( $iModuleMode & $MODMODE_PROGRAM ? 'program' : 'module' ) . " $ModuleName" );
+	PrintRTL(( $iModuleMode & $MODMODE_PROGRAM ? 'program' : 'module' ) . " $CurModuleName" );
 	
 	if( $iModuleMode & $MODMODE_NORMAL ){
 		
 		my( $PortDef2 ) = '';
 		
-		foreach $Wire ( @WireList ){
+		foreach $Wire ( @{ $WireList->{ $CurModuleName }} ){
 			$Type = QueryWireType( $Wire, 'd' );
 			
 			if( $Type eq "input" || $Type eq "output" || $Type eq "inout" ){
@@ -655,7 +653,7 @@ sub EndModule{
 	
 	# in/out/reg/wire 宣言出力
 	
-	foreach $Wire ( @WireList ){
+	foreach $Wire ( @{ $WireList->{ $CurModuleName }} ){
 		if(( $Type = QueryWireType( $Wire, "d" )) ne "" ){
 			
 			if( $iModuleMode & $MODMODE_NORMAL ){
@@ -906,7 +904,7 @@ sub DefineInst{
 								$WireBus,
 								'?',
 								$Attr |= $ATTR_WEAK_W,
-								$ModuleName
+								$CurModuleName
 							);
 						}
 					}else{
@@ -914,7 +912,7 @@ sub DefineInst{
 							$WireBus,
 							$BitWidthWire,
 							$Attr,
-							$ModuleName
+							$CurModuleName
 						) if( $WireBus ne '' );
 					}
 				}elsif( $Wire =~ /^\d+$/ ){
@@ -1313,7 +1311,7 @@ sub RegisterWire{
 	
 	my( $MSB0, $MSB1, $LSB0, $LSB1 );
 	
-	if( defined( $Wire = $WireList{ $Name } )){
+	if( defined( $Wire = $WireListHash->{ $ModuleName }{ $Name } )){
 		# すでに登録済み
 		
 		# ATTR_WEAK_W が絡む場合の BitWidth を更新する
@@ -1374,13 +1372,13 @@ sub RegisterWire{
 	}else{
 		# 新規登録
 		
-		push( @WireList, $Wire = {
+		push( @{ $WireList->{ $ModuleName }}, $Wire = {
 			'name'	=> $Name,
 			'width'	=> $BitWidth,
 			'attr'	=> $Attr
 		} );
 		
-		$WireList{ $Name } = $Wire;
+		$WireListHash->{ $ModuleName }{ $Name } = $Wire;
 	}
 }
 
@@ -1422,7 +1420,7 @@ sub OutputWireList{
 	$WireCntUnresolved = 0;
 	$WireCntAdded	   = 0;
 	
-	foreach $Wire ( @WireList ){
+	foreach $Wire ( @{ $WireList->{ $CurModuleName }} ){
 		
 		$Attr = $Wire->{ attr };
 		$Type = QueryWireType( $Wire, "" );
@@ -1436,7 +1434,7 @@ sub OutputWireList{
 		++$WireCntUnresolved if( !( $Attr & ( $ATTR_BYDIR | $ATTR_FIX | $ATTR_REF )));
 		if( !( $Attr & $ATTR_DEF ) && ( $Type =~ /[IOB]/ )){
 			++$WireCntAdded;
-			Warning( "'$ModuleName.$Wire->{ name }' is undefined, generated automatically" )
+			Warning( "'$CurModuleName.$Wire->{ name }' is undefined, generated automatically" )
 				if( !( $iModuleMode & $MODMODE_TEST ));
 		}
 		
@@ -1457,7 +1455,7 @@ sub OutputWireList{
 		));
 		
 		# bus width is weakly defined error
-		#Warning( "Bus size is not fixed '$ModuleName.$Wire->{ name }'" )
+		#Warning( "Bus size is not fixed '$CurModuleName.$Wire->{ name }'" )
 		#	if(
 		#		( $Wire->{ attr } & ( $ATTR_WEAK_W | $ATTR_DC_WEAK_W | $ATTR_DEF )) == $ATTR_WEAK_W &&
 		#		( $iModuleMode & $MODMODE_TEST ) == 0
@@ -1467,7 +1465,7 @@ sub OutputWireList{
 	if( $Debug ){
 		@WireListBuf = sort( @WireListBuf );
 		
-		printf( "Wire info : Unresolved:%3d / Added:%3d ( $ModuleName\@$DefFile )\n",
+		printf( "Wire info : Unresolved:%3d / Added:%3d ( $CurModuleName\@$DefFile )\n",
 			$WireCntUnresolved, $WireCntAdded );
 		
 		if( !open( $fpList, ">> $ListFile" )){
@@ -1475,7 +1473,7 @@ sub OutputWireList{
 			return;
 		}
 		
-		print( $fpList "*** $ModuleName wire list ***\n" );
+		print( $fpList "*** $CurModuleName wire list ***\n" );
 		print( $fpList @WireListBuf );
 		close( $fpList );
 	}
@@ -1492,7 +1490,7 @@ sub ExpandBus{
 		$Wire
 	);
 	
-	foreach $Wire ( @WireList ){
+	foreach $Wire ( @{ $WireList->{ $CurModuleName }} ){
 		if( $Wire->{ name } =~ /\$n/ && $Wire->{ width } ne "" ){
 			
 			# 展開すべきバス
@@ -1563,7 +1561,7 @@ sub ExpandBus2{
 		
 		# child wire を登録
 		
-		RegisterWire( $WireNum, "", $Attr, $ModuleName );
+		RegisterWire( $WireNum, "", $Attr, $CurModuleName );
 	}
 	
 	# } = hoge;
@@ -1887,7 +1885,7 @@ sub PrintAllInputs {
 	$Tab	=~ /^(\s*)/; $Tab = $1;
 	$_		= ();
 	
-	foreach $Wire ( @WireList ){
+	foreach $Wire ( @{ $WireList->{ $CurModuleName }} ){
 		if( $Wire->{ name } =~ /^$Param$/ && QueryWireType( $Wire, '' ) eq 'input' ){
 			$_ .= $Tab . $Wire->{ name } . ",\n";
 		}
@@ -2128,7 +2126,7 @@ sub SizeOf {
 	return 'x' if( $Flag & $EX_NOSIGINFO );
 	
 	while( s/($CSymbol)// ){
-		if( !defined( $Wire = $WireList{ $1 } )){
+		if( !defined( $Wire = $WireListHash->{ $CurModuleName }{ $1 } )){
 			Error( "undefined wire '$1'" );
 		}elsif( $Wire->{ width } =~ /(\d+):(\d+)/ ){
 			$Bits += ( $1 - $2 + 1 );
@@ -2149,7 +2147,7 @@ sub TypeOf {
 	if( !/($CSymbol)/ ){
 		Error( "syntax error (typeof)" );
 		$_ = '';
-	}elsif( !defined( $_ = $WireList{ $1 } )){
+	}elsif( !defined( $_ = $WireListHash->{ $CurModuleName }{ $1 } )){
 		Error( "undefined wire '$1'" );
 		$_ = '';
 	}else{
@@ -2313,8 +2311,8 @@ sub DeflizeModule {
 			if(
 				# output + reg で reg の方を削除
 				!$V2KPortDef &&
-				$Type eq 'reg' && $WireList{ $Name } &&
-				( $WireList{ $Name }{ attr } & $ATTR_OUT ) ||
+				$Type eq 'reg' && $WireListHash->{ $ModuleName }{ $Name } &&
+				( $WireListHash->{ $ModuleName }{ $Name }{ attr } & $ATTR_OUT ) ||
 				
 				# 自動生成ワイヤを削除
 				$Type eq 'wire' && $DeflizeDelPort{ $Name }
@@ -2325,8 +2323,8 @@ sub DeflizeModule {
 			# output + reg で output を output reg に変更
 			if(
 				!$V2KPortDef &&
-				$Type eq 'output' && $WireList{ $Name } &&
-				( $WireList{ $Name }{ attr } & $ATTR_REF )	# reg 宣言された
+				$Type eq 'output' && $WireListHash->{ $ModuleName }{ $Name } &&
+				( $WireListHash->{ $ModuleName }{ $Name }{ attr } & $ATTR_REF )	# reg 宣言された
 			){
 				$Type = 'output reg';
 			}
