@@ -77,8 +77,6 @@ my $SEEK_SET = 0;
 
 my( $DefFile, $RTLFile, $ListFile, $CppFile );
 my $PrintBuf;
-my $RTLBuf;
-my $PerlBuf;
 my $CurModuleName;
 my $ExpandTab;
 my $BlockNoOutput	= 0;
@@ -86,7 +84,12 @@ my $BlockRepeat		= 0;
 my( $fpIn, $fpOut, $fpList );
 
 my $ResetLinePos	= 0;
-my $VppStage		= 0;
+
+my $VPPSTAGE_CPP	= 0;
+my $VPPSTAGE_VPP	= 1;
+my $VPPSTAGE_VPPOUT	= 2;
+my $VppStage		= $VPPSTAGE_CPP;
+
 my $bPrevLineBlank	= 1;
 my $CppOnly			= 0;
 my $Deflize			= 0;
@@ -97,8 +100,6 @@ my $WireList;
 my $WireListHash;
 my @SkelList;
 my $iModuleMode;
-my $PortDef;
-my $ParamDef;
 my %DefineTbl;
 
 my @CommentPool = (
@@ -158,11 +159,7 @@ sub main{
 	
 	# デフォルトマクロリード
 	$fpIn		= DATA;
-	$PrintBuf	= \$RTLBuf;
-	$RTLBuf		= "";
 	CppParser();
-	undef( $PrintBuf );
-	undef( $RTLBuf );
 	undef( $fpIn );
 	
 	# expand $repeat
@@ -189,12 +186,12 @@ sub main{
 	close( $fpOut );
 	close( $fpIn );
 	
-	if( !open( $fpIn, "< $CppFile" )){
-		Error( "can't open file \"$CppFile\"" );
-		return;
-	}
-	
 	if( $CppOnly ){
+		if( !open( $fpIn, "< $CppFile" )){
+			Error( "can't open file \"$CppFile\"" );
+			return;
+		}
+		
 		while( <$fpIn> ){
 			print( $Debug ? $_ : ExpandMacro( $_, $EX_STR | $EX_COMMENT ));
 		}
@@ -203,21 +200,14 @@ sub main{
 		
 		unlink( $ListFile );
 		
-		$ExpandTab ?
-			open( $fpOut, "| expand -$TabWidth > $RTLFile" ) :
-			open( $fpOut, "> $RTLFile" );
-		
-		$VppStage = 1;
-		VppParser();
-		
-		close( $fpOut );
-		close( $fpIn );
+		VppParser( $VPPSTAGE_VPP );
+		VppParser( $VPPSTAGE_VPPOUT ) if( !$ErrorCnt );
 	}
 	
 	unlink( $CppFile );
 }
 
-### 1行読む #################################################################
+### 1行読む ##################################################################
 
 sub ReadLine {
 	local $_ = ReadLineSub( $_[ 0 ] );
@@ -230,17 +220,17 @@ sub ReadLine {
 		$Cnt = $#CommentPool + 1;
 		
 		if( $1 eq '//' ){
-			push( @CommentPool, $1 ) if( s#(//.*)#<__COMMENT_${Cnt}__># && !$VppStage );
+			push( @CommentPool, $1 ) if( s#(//.*)#<__COMMENT_${Cnt}__># && $VppStage == $VPPSTAGE_CPP );
 		}elsif( $1 eq '"' ){
 			if( s/((?<!\\)".*?(?<!\\)")/<__STRING_${Cnt}__>/ ){
-				push( @CommentPool, $1 ) if( !$VppStage );
+				push( @CommentPool, $1 ) if( $VppStage == $VPPSTAGE_CPP );
 			}else{
 				Error( 'unterminated "' );
 				s/"//;
 			}
 		}elsif( s#(/\*.*?\*/)#<__COMMENT_${Cnt}__>#s ){
 			# /* ... */ の組が発見されたら，置換
-			push( @CommentPool, $1 ) if( !$VppStage );
+			push( @CommentPool, $1 ) if( $VppStage == $VPPSTAGE_CPP );
 			$ResetLinePos = $.;
 		}else{
 			# /* ... */ の組が発見されないので，発見されるまで行 cat
@@ -295,7 +285,7 @@ sub GetFuncArg {
 	$_;
 }
 
-### Start of the module #####################################################
+### CPP directive 処理 #######################################################
 
 sub CppParser {
 	my( $BlockMode, $bNoOutput ) = @_;
@@ -459,11 +449,26 @@ sub CppParser {
 	$BlockRepeat	>>= 1;
 }
 
-### マルチラインパーザ #######################################################
+### VPP 処理 #################################################################
 
 sub VppParser {
+	( $VppStage ) = @_;
+	
 	local( $_ );
 	my( $Line, $Word );
+	
+	if( !open( $fpIn, "< $CppFile" )){
+		Error( "can't open file \"$CppFile\"" );
+		return;
+	}
+	
+	if( $VppStage == $VPPSTAGE_VPPOUT ){
+		$ExpandTab ?
+			open( $fpOut, "| expand -$TabWidth > $RTLFile" ) :
+			open( $fpOut, "> $RTLFile" );
+	}else{
+		undef( $fpOut );
+	}
 	
 	while( $_ = ReadLine( $fpIn )){
 		( $Word, $Line ) = GetWord(
@@ -491,6 +496,9 @@ sub VppParser {
 			PrintRTL( ExpandMacro( $_, $EX_INTFUNC | $EX_STR | $EX_COMMENT ));
 		}
 	}
+	
+	close( $fpOut ) if( $fpOut );
+	close( $fpIn );
 }
 
 ### Start of the module #####################################################
@@ -510,11 +518,8 @@ sub StartModule{
 	
 	# wire list 初期化
 	
-	$PortDef	= '';
-	$ParamDef	= '';
-	
-	$PrintBuf	= \$RTLBuf;
-	$RTLBuf		= "";
+	my $PortDef		= '';
+	my $ParamDef	= '';
 	
 	( $CurModuleName, $_ ) = GetWord( ExpandMacro( $_, $EX_INTFUNC | $EX_RMCOMMENT | $EX_NOREAD ));
 	
@@ -531,7 +536,7 @@ sub StartModule{
 		$_ = $2;
 	}
 	
-	# ); まで読む 何か読めたらそれをポートリストとみなす
+	# module mod( port_list ); の port の中身を読む
 	
 	if( !/^\s*;/ ){
 		while( $_ = ReadLine( $fpIn )){
@@ -562,15 +567,73 @@ sub StartModule{
 		}
 		
 		if( $PortDef =~ /$SigTypeDef/ ){
+			# port_list が input/output 付きの新形式なら，$PortDef はその中身になる
 			$PortDef =~ s/;([^;]*)$/$1/;
 			$PortDef =~ s/;/,/g;
 			$PortDef = ExpandMacro( $PortDef, $EX_STR | $EX_COMMENT | $EX_NOREAD );
 		}else{
+			# port_list が信号名しか無い旧形式なら，$PortDef は空
 			$PortDef = '';
 		}
 	}
 	
-	RegisterModuleIO( $CurModuleName, $CppFile, $ARGV[ 0 ]);
+	if( $VppStage == $VPPSTAGE_VPP ){
+		# VPPSTAGE_VPP 時は，このモジュールの IO を登録
+		RegisterModuleIO( $CurModuleName, $CppFile, $ARGV[ 0 ]);
+	}else{
+		# VPPSTAGE_VPPOUT 時は，module 宣言，ポート宣言あたりを出力
+		
+		my(
+			$Type,
+			$Wire
+		);
+		
+		PrintRTL( '//' ) if( $iModuleMode & $MODMODE_INC );
+		PrintRTL(( $iModuleMode & $MODMODE_PROGRAM ? 'program' : 'module' ) . " $CurModuleName" );
+		
+		if( $iModuleMode & $MODMODE_NORMAL ){
+			
+			my( $PortDef2 ) = '';
+			
+			foreach $Wire ( @{ $WireList->{ $CurModuleName }} ){
+				$Type = QueryWireType( $Wire, 'd' );
+				
+				if( $Type eq "input" || $Type eq "output" || $Type eq "inout" ){
+					$PortDef2 .= FormatSigDef( $Type, $Wire->{ width }, $Wire->{ name }, ',' );
+				}
+			}
+			
+			if( $PortDef || $PortDef2 ){
+				$PortDef .= "\t,\n" if( $PortDef && $PortDef2 );
+				$PortDef2 =~ s/,([^,]*)$/$1/;
+				PrintRTL( "$ParamDef(\n$PortDef$PortDef2)" );
+			}
+		}
+		
+		PrintRTL( ";\n" );
+		
+		# in/out/reg/wire 宣言出力
+		
+		foreach $Wire ( @{ $WireList->{ $CurModuleName }} ){
+			if(( $Type = QueryWireType( $Wire, "d" )) ne "" ){
+				
+				if( $iModuleMode & $MODMODE_NORMAL ){
+					next if( $Type eq "input" || $Type eq "output" || $Type eq "inout" );
+				}elsif( $iModuleMode & $MODMODE_TEST ){
+					$Type = "reg"  if( $Type eq "input" );
+					$Type = "wire" if( $Type eq "output" || $Type eq "inout" );
+				}elsif( $iModuleMode & $MODMODE_INC ){
+					# 非テストモジュールの include モードでは，とりあえず全て wire にする
+					$Type = 'wire';
+				}
+				
+				PrintRTL( FormatSigDef( $Type, $Wire->{ width }, $Wire->{ name }, ';' ));
+			}
+		}
+		
+		# wire リストを出力 for debug
+		OutputWireList();
+	}
 }
 
 # 親 module の wire / port リストをget
@@ -608,75 +671,17 @@ sub RegisterModuleIO {
 
 sub EndModule{
 	local( $_ ) = @_;
-	my(
-		$Type,
-		$bFirst,
-		$Wire
-	);
 	
-	my( $MSB, $LSB, $MSB_Drv, $LSB_Drv );
-	
-	# expand bus
-	
-	ExpandBus();
-	
-	PrintRTL( '//' ) if( $iModuleMode & $MODMODE_INC );
-	PrintRTL( ExpandMacro( $_, $EX_STR | $EX_COMMENT ));
-	undef( $PrintBuf );
-	
-	# module port リストを出力
-	
-	$bFirst = 1;
-	PrintRTL( '//' ) if( $iModuleMode & $MODMODE_INC );
-	PrintRTL(( $iModuleMode & $MODMODE_PROGRAM ? 'program' : 'module' ) . " $CurModuleName" );
-	
-	if( $iModuleMode & $MODMODE_NORMAL ){
+	if( $VppStage == $VPPSTAGE_VPP){
+		# expand bus
+		ExpandBus();
+	}else{
+		PrintRTL( '//' ) if( $iModuleMode & $MODMODE_INC );
+		PrintRTL( ExpandMacro( $_, $EX_STR | $EX_COMMENT ));
 		
-		my( $PortDef2 ) = '';
-		
-		foreach $Wire ( @{ $WireList->{ $CurModuleName }} ){
-			$Type = QueryWireType( $Wire, 'd' );
-			
-			if( $Type eq "input" || $Type eq "output" || $Type eq "inout" ){
-				$PortDef2 .= FormatSigDef( $Type, $Wire->{ width }, $Wire->{ name }, ',' );
-			}
-		}
-		
-		if( $PortDef || $PortDef2 ){
-			$PortDef .= "\t,\n" if( $PortDef && $PortDef2 );
-			$PortDef2 =~ s/,([^,]*)$/$1/;
-			PrintRTL( "$ParamDef(\n$PortDef$PortDef2)" );
-		}
+		# wire リストを出力 for debug
+		OutputWireList();
 	}
-	
-	PrintRTL( ";\n" );
-	
-	# in/out/reg/wire 宣言出力
-	
-	foreach $Wire ( @{ $WireList->{ $CurModuleName }} ){
-		if(( $Type = QueryWireType( $Wire, "d" )) ne "" ){
-			
-			if( $iModuleMode & $MODMODE_NORMAL ){
-				next if( $Type eq "input" || $Type eq "output" || $Type eq "inout" );
-			}elsif( $iModuleMode & $MODMODE_TEST ){
-				$Type = "reg"  if( $Type eq "input" );
-				$Type = "wire" if( $Type eq "output" || $Type eq "inout" );
-			}elsif( $iModuleMode & $MODMODE_INC ){
-				# 非テストモジュールの include モードでは，とりあえず全て wire にする
-				$Type = 'wire';
-			}
-			
-			PrintRTL( FormatSigDef( $Type, $Wire->{ width }, $Wire->{ name }, ';' ));
-		}
-	}
-	
-	# buf にためてきた記述をフラッシュ
-	
-	print( $fpOut $RTLBuf );
-	$RTLBuf = "";
-	
-	# wire リストを出力 for debug
-	OutputWireList();
 	
 	$iModuleMode = $MODMODE_NONE;
 }
@@ -724,6 +729,8 @@ sub Evaluate2 {
 sub PrintRTL{
 	local( $_ ) = @_;
 	my( $tmp );
+	
+	return if( !$fpOut );
 	
 	# Case / FullCase 処理
 	s|\bC(asex?\s*\(.*\))|c$1 <__COMMENT_0__>|g;
@@ -880,7 +887,7 @@ sub DefineInst{
 				
 				# wire list に登録
 				
-				if( $Wire !~ /^\d/ ){
+				if( $VppStage == $VPPSTAGE_VPP && $Wire !~ /^\d/ ){
 					$Attr |= ( $InOut eq "input" )	? $ATTR_REF		:
 							 ( $InOut eq "output" )	? $ATTR_FIX		:
 													  $ATTR_BYDIR	;
@@ -926,7 +933,6 @@ sub DefineInst{
 			$bFirst = 0;
 			
 			$tmp = TabSpace( '', $tab0 );
-			
 			$Wire =~ s/\$n//g;		#z $n の削除
 			$tmp = TabSpace( "$tmp.$Port", $tab1 );
 			$tmp = TabSpace( "$tmp( $Wire", $tab2 );
@@ -943,7 +949,7 @@ sub DefineInst{
 	
 	# SkelList 未使用警告
 	
-	WarnUnusedSkelList( $ModuleInst, $LineNo );
+	WarnUnusedSkelList( $ModuleInst, $LineNo ) if( $VppStage == $VPPSTAGE_VPP );
 }
 
 ### search module & get IO definition ########################################
@@ -1120,7 +1126,7 @@ sub OutputHeader{
 	local $_ = $DefFile;
 	s/\..*//g;
 	
-	print( $fpOut <<EOF );
+	PrintRTL( <<EOF );
 /*****************************************************************************
 
 	$RTLFile -- $_ module	generated by vpp.pl
@@ -1753,6 +1759,8 @@ sub ForeachOutput{
 sub ExecPerl {
 	local $_;
 	
+	my $PerlBuf;
+	
 	# print buffer 切り替え
 	my $PrevPrintBuf = $PrintBuf;
 	$PrintBuf = \$PerlBuf;
@@ -1898,12 +1906,26 @@ sub Require {
 
 sub TabSpace {
 	local $_;
-	my( $Width, $Tab, $ForceSplit );
+	my( $Width, $Tab, $ForceSplit, $Len );
 	( $_, $Width, $Tab, $ForceSplit ) = @_;
 	
 	$Tab = $TabWidth if( !$Tab );
 	
-	my $TabNum = int(( $Width - length( $_ ) + $Tab - 1 ) / $Tab );
+	# tab を考慮した表示上の文字列長算出
+	if( /\t/ ){
+		$Len = 0;
+		for( my $i = 0; $i < length( $_ ); ++$i ){
+			if( substr( $_, $i, 1 ) eq "\t" ){
+				$Len = int(( $Len + $Tab ) / $Tab ) * $Tab;
+			}else{
+				++$Len;
+			}
+		}
+	}else{
+		$Len = length( $_ );
+	}
+	
+	my $TabNum = int(( $Width - $Len + $Tab - 1 ) / $Tab );
 	$TabNum = 1 if( $ForceSplit && $TabNum == 0 );
 	
 	$_ . "\t" x $TabNum;
