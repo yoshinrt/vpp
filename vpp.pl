@@ -667,6 +667,29 @@ sub RegisterModuleIO {
 	}
 }
 
+### 浮き wire 押さえ #########################################################
+
+sub OutputFloatingWireFix {
+	
+	foreach my $Wire ( @{ $WireList->{ $CurModuleName }} ){
+		if(
+			defined( $Wire->{ drv_width }) &&
+			$Wire->{ drv_width } ne $Wire->{ width }
+		){
+			my( $MSBw, $LSBw ) = GetBusWidth( $Wire->{ width } );
+			my( $MSBd, $LSBd ) = GetBusWidth( $Wire->{ drv_width } );
+			
+			PrintRTL( sprintf( "\tassign $Wire->{ name }\[$MSBw:%d\] = %d'd0;\n",
+				$MSBd + 1, $MSBw - $MSBd
+			)) if( $MSBd < $MSBw );
+			
+			PrintRTL( sprintf( "\tassign $Wire->{ name }\[%d:$LSBw\] = %d'd0;\n",
+				$LSBd - 1, $LSBd - $LSBw
+			)) if( $LSBd > $LSBw );
+		}
+	}
+}
+
 ### End of the module ########################################################
 
 sub EndModule{
@@ -676,11 +699,12 @@ sub EndModule{
 		# expand bus
 		ExpandBus();
 	}else{
+		# bit width mismatch 時の，浮き bit 押さえ
+		OutputFloatingWireFix();
+		
+		
 		PrintRTL( '//' ) if( $iModuleMode & $MODMODE_INC );
 		PrintRTL( ExpandMacro( $_, $EX_STR | $EX_COMMENT ));
-		
-		# wire リストを出力 for debug
-		OutputWireList();
 	}
 	
 	$iModuleMode = $MODMODE_NONE;
@@ -885,45 +909,54 @@ sub DefineInst{
 					}
 				}
 				
-				# wire list に登録
+				# 数字だけが指定された場合，bit幅表記をつける
+				if( $Wire =~ /^\d+$/ ){
+					$Wire = sprintf( "%d'd$Wire", GetBusWidth2( $BitWidth ));
+				}
 				
-				if( $VppStage == $VPPSTAGE_VPP && $Wire !~ /^\d/ ){
-					$Attr |= ( $InOut eq "input" )	? $ATTR_REF		:
-							 ( $InOut eq "output" )	? $ATTR_FIX		:
-													  $ATTR_BYDIR	;
-					
-					# wire 名を修正
-					
-					$WireBus =~ s/\d+'[hdob]\d+//g;
-					$WireBus =~ s/[\s{}]//g;
-					$WireBus =~ s/\b\d+\b//g;
-					
-					@_ = split( /,+/, $WireBus );
-					
-					if( $#_ > 0 ){
-						# { ... , ... } 等，concat 信号が接続されている
-						foreach $WireBus ( @_ ){
-							next if( $WireBus =~ /^\d/ ); # 定数スキップ
-							$WireBus =~ s/\[.*\]//;
-							next if( $WireBus eq '' );
+				elsif( $Wire !~ /^\d+/ ){
+					# wire list に登録
+					if( $VppStage == $VPPSTAGE_VPP ){
+						$Attr |= ( $InOut eq "input" )	? $ATTR_REF		:
+								 ( $InOut eq "output" )	? $ATTR_FIX		:
+														  $ATTR_BYDIR	;
+						
+						# wire 名を修正
+						
+						$WireBus =~ s/\d+'[hdob]\d+//g;
+						$WireBus =~ s/[\s{}]//g;
+						$WireBus =~ s/\b\d+\b//g;
+						
+						@_ = split( /,+/, $WireBus );
+						
+						if( $#_ > 0 ){
+							# { ... , ... } 等，concat 信号が接続されている
+							foreach $WireBus ( @_ ){
+								next if( $WireBus =~ /^\d/ ); # 定数スキップ
+								$WireBus =~ s/\[.*\]//;
+								next if( $WireBus eq '' );
+								RegisterWire(
+									$WireBus,
+									'?',
+									$Attr |= $ATTR_WEAK_W,
+									$CurModuleName
+								);
+							}
+						}else{
 							RegisterWire(
 								$WireBus,
-								'?',
-								$Attr |= $ATTR_WEAK_W,
+								$BitWidthWire,
+								$Attr,
 								$CurModuleName
-							);
+							) if( $WireBus ne '' );
 						}
-					}else{
-						RegisterWire(
-							$WireBus,
-							$BitWidthWire,
-							$Attr,
-							$CurModuleName
-						) if( $WireBus ne '' );
 					}
-				}elsif( $Wire =~ /^\d+$/ ){
-					# 数字だけが指定された場合，bit幅表記をつける
-					$Wire = sprintf( "%d'd$Wire", GetBusWidth2( $BitWidth ));
+					
+					# wire の bit size mismatch 解消
+					
+					if( $BitWidth ne ( $WireListHash->{ $CurModuleName }{ $Wire }{ width } || '' )){
+						$Wire = $Wire . ( $BitWidth eq '' ? '[0]' : "[$BitWidth]" );
+					}
 				}
 			}
 			
@@ -1354,7 +1387,6 @@ sub RegisterWire{
 		}
 		
 		# multiple driver 警告
-		
 		if(
 			( $Wire->{ attr } & $Attr & $ATTR_FIX ) &&
 			!( $Attr & $ATTR_MD )
@@ -1362,17 +1394,36 @@ sub RegisterWire{
 			Warning( "multiple driver ( wire : $Name )" );
 		}
 		
+		# out, inout かつ WEAK でないときのみ，drv bit を更新
+		elsif(
+			( $Attr & ( $ATTR_FIX | $ATTR_BYDIR )) && !( $Attr & $ATTR_WEAK_W )
+		){
+			# すでに drv が登録されていたら警告
+			if( defined( $Wire->{ drv_width })){
+				Warning( "multiple driver info ( wire : $Name )" );
+			}
+			
+			$Wire->{ drv_width } = $BitWidth;
+		}
+		
 		$Wire->{ attr } |= ( $Attr & ~$ATTR_WEAK_W );
 		
 	}else{
 		# 新規登録
-		
-		push( @{ $WireList->{ $ModuleName }}, $Wire = {
+		$Wire = {
 			'name'	=> $Name,
 			'width'	=> $BitWidth,
 			'attr'	=> $Attr
-		} );
+		};
 		
+		# out, inout かつ WEAK でないときのみ，drv bit を登録する
+		
+		$Wire->{ drv_width } = $BitWidth if(
+			( $Attr & ( $ATTR_FIX | $ATTR_BYDIR )) &&
+			!( $Attr & $ATTR_WEAK_W )
+		);
+		
+		push( @{ $WireList->{ $ModuleName }}, $Wire );
 		$WireListHash->{ $ModuleName }{ $Name } = $Wire;
 	}
 }
@@ -1446,7 +1497,7 @@ sub OutputWireList{
 			(( $Attr & $ATTR_BYDIR )	? "B" : "-" ) .
 			(( $Attr & $ATTR_FIX )		? "F" : "-" ) .
 			(( $Attr & $ATTR_REF )		? "R" : "-" ) .
-			"\t$Wire->{ width }\t$Wire->{ name }\n"
+			"\t$Wire->{ width }\t" . ( $Wire->{ drv_width } || '' ) . "\t$Wire->{ name }\n"
 		));
 		
 		# bus width is weakly defined error
@@ -1928,7 +1979,9 @@ sub TabSpace {
 	my $TabNum = int(( $Width - $Len + $Tab - 1 ) / $Tab );
 	$TabNum = 1 if( $ForceSplit && $TabNum == 0 );
 	
-	$_ . "\t" x $TabNum;
+	$_ .= "\t" x $TabNum if( $TabNum > 0 );
+	
+	$_;
 }
 
 ### CPP directive 処理 #######################################################
