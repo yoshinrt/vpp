@@ -794,7 +794,6 @@ sub DefineInst{
 		$BitWidthWire,
 		
 		$bFirst,
-		$Len,
 		
 		$tmp,
 		$tmp2
@@ -926,21 +925,11 @@ sub DefineInst{
 			PrintRTL( $bFirst ? "(\n" : ",\n" );
 			$bFirst = 0;
 			
-			$tmp  = "\t" x (( $tab0 + $TabWidth - 1 ) / $TabWidth );
-			$Len  = $tab0;
+			$tmp = TabSpace( '', $tab0 );
 			
 			$Wire =~ s/\$n//g;		#z $n ¤Îºï½ü
-			$tmp .= ".$Port";
-			$Len += length( $Port ) + 1;
-			$tmp .= "\t" x (( $tab1 - $Len + $TabWidth - 1 ) / $TabWidth );
-			$Len  = $tab1;
-			
-			$tmp .= "( $Wire";
-			$Len += length( $Wire ) + 2;
-			
-			$tmp .= "\t" x (( $tab2 - $Len + $TabWidth - 1 ) / $TabWidth );
-			$Len  = $tab2;
-			
+			$tmp = TabSpace( "$tmp.$Port", $tab1 );
+			$tmp = TabSpace( "$tmp( $Wire", $tab2 );
 			$tmp .= ")";
 			
 			PrintRTL( "$tmp" );
@@ -1909,10 +1898,12 @@ sub Require {
 
 sub TabSpace {
 	local $_;
-	my( $Width, $TabWidth, $ForceSplit );
-	( $_, $Width, $TabWidth, $ForceSplit ) = @_;
+	my( $Width, $Tab, $ForceSplit );
+	( $_, $Width, $Tab, $ForceSplit ) = @_;
 	
-	my $TabNum = int(( $Width - length( $_ ) + $TabWidth - 1 ) / $TabWidth );
+	$Tab = $TabWidth if( !$Tab );
+	
+	my $TabNum = int(( $Width - length( $_ ) + $Tab - 1 ) / $Tab );
 	$TabNum = 1 if( $ForceSplit && $TabNum == 0 );
 	
 	$_ . "\t" x $TabNum;
