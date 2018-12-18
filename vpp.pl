@@ -101,6 +101,7 @@ my $WireListHash;
 my @SkelList;
 my $iModuleMode;
 my %DefineTbl;
+my %ModuleIOTbl;
 
 my @CommentPool = (
 	'/* synopsys parallel_case */',
@@ -508,7 +509,6 @@ sub StartModule{
 	( $_, $iModuleMode ) = @_;
 	
 	my(
-		@ModuleIO,
 		@IOList,
 		$InOut,
 		$BitWidth,
@@ -643,14 +643,14 @@ sub RegisterModuleIO {
 	my( $ModuleName, $CppFile, $DispFile ) = @_;
 	my( $InOut, $BitWidth, @IOList, $Port, $Attr );
 	
-	my @ModuleIO = GetModuleIO( $ModuleName, $CppFile, $DispFile );
+	my $ModuleIO = GetModuleIO( $ModuleName, $CppFile, $DispFile );
 	
 	# input/output 文 1 行ごとの処理
 	
-	while( $_ = shift( @ModuleIO )){
-		( $InOut, $BitWidth, @IOList )	= split( /\t/, $_ );
+	foreach my $io ( @$ModuleIO ){
+		( $InOut, $BitWidth, @IOList )	= split( /\t/, $io );
 		
-		while( $Port = shift( @IOList )){
+		foreach $Port ( @IOList ){
 			$Attr = $InOut eq "input"	? $ATTR_DEF | $ATTR_IN		:
 					$InOut eq "output"	? $ATTR_DEF | $ATTR_OUT		:
 					$InOut eq "inout"	? $ATTR_DEF | $ATTR_INOUT	:
@@ -818,7 +818,6 @@ sub DefineInst{
 		$WireBus,
 		$Attr,
 		
-		@ModuleIO,
 		@IOList,
 		$InOut,
 		$BitWidth,
@@ -870,16 +869,16 @@ sub DefineInst{
 	
 	# get sub module's port list
 	
-	@ModuleIO = GetModuleIO( $ModuleName, $ModuleFile );
+	my $ModuleIO = GetModuleIO( $ModuleName, $ModuleFile );
 	
 	# input/output 文 1 行ごとの処理
 	
-	while( $_ = shift( @ModuleIO )){
+	foreach my $io ( @$ModuleIO ){
 		
-		( $InOut, $BitWidth, @IOList )	= split( /\t/, $_ );
+		( $InOut, $BitWidth, @IOList )	= split( /\t/, $io );
 		next if( $InOut !~ /^(?:input|output|inout)$/ );
 		
-		while( $Port = shift( @IOList )){
+		foreach $Port ( @IOList ){
 			( $Wire, $Attr ) = ConvPort2Wire( $Port, $BitWidth, $InOut );
 			
 			if( !( $Attr & $ATTR_NC )){
@@ -993,6 +992,10 @@ sub GetModuleIO{
 	my( $ModuleName, $ModuleFile, $ModuleFileDisp ) = @_;
 	my( $Buf, $bFound, $fp );
 	
+	if( exists( $ModuleIOTbl{ "$ModuleName\t$ModuleFile" })){
+		return $ModuleIOTbl{ "$ModuleName\t$ModuleFile" };
+	}
+	
 	$ModuleFileDisp = $ModuleFile if( !defined( $ModuleFileDisp ));
 	
 	$bFound = 0;
@@ -1049,7 +1052,11 @@ sub GetModuleIO{
 	s/\n$//g;
 	#print( "$ModuleName--------\n$_\n" ); # if( $Debug );
 	
-	return( split( /\n/, $_ ));
+	my $ret;
+	@$ret = split( /\n/, $_ );
+	$ModuleIOTbl{ "$ModuleName\t$ModuleFile" } = $ret;
+	
+	return( $ret );
 }
 
 sub DeleteExceptPort{
