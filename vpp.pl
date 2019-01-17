@@ -733,7 +733,11 @@ sub Evaluate {
 	
 	s/\$Eval\b//g;
 	$_ = eval( $_ );
-	Error( $@ ) if( $@ ne '' );
+	if( $@ ne '' ){
+		$_ = $@; s/[\x0D\x0A]//g;
+		Error( $_ );
+		return '';
+	}
 	return( $_ );
 }
 
@@ -743,7 +747,11 @@ sub Evaluate2 {
 	
 	s/\$Eval\b//g;
 	@_ = eval( $_ );
-	Error( $@ ) if( $@ ne '' );
+	if( $@ ne '' ){
+		$_ = $@; s/[\x0D\x0A]//g;
+		Error( $_ );
+		return '';
+	}
 	return( @_ );
 }
 
@@ -1138,7 +1146,7 @@ sub PrintDiagMsg {
 		}
 	}
 	
-	printf( "$DefFile(%d): $_\n", $LineNo || $. );
+	printf( "%s(%d): %s\n", $DefFile, $LineNo || $., $_ );
 }
 
 ### define default port --> wire name ########################################
