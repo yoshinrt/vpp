@@ -176,7 +176,7 @@ sub main{
 	if( $Debug >= 2 ){
 		print( "=== macro ===\n" );
 		foreach $_ ( sort keys %DefineTbl ){
-			printf( "$_%s\t$DefineTbl{ $_ }{ macro }\n", $DefineTbl{ $_ }{ args } eq 's' ? '' : '()' );
+			printf( "$_%s\t%s\n", $DefineTbl{ $_ }{ args } eq 's' ? '' : '()', $DefineTbl{ $_ }{ macro } );
 		}
 		print( "=== comment =\n" );
 		print( join( "\n", @CommentPool ));
@@ -2043,15 +2043,18 @@ sub ExpandMacro {
 	
 	$Mode = $EX_CPP | $EX_REP if( !defined( $Mode ));
 	
-	if( $BlockRepeat && $Mode & $EX_REP ){
-		s/%(?:\{(.+?)\})?([+\-\d\.#]*[%cCdiouxXeEfgGnpsSb])/ExpandPrintfFmtSub( $2, $1 )/ge;
-	}
-	
 	my $bReplaced = 1;
-	if( $Mode & $EX_CPP ){
+	if( $Mode & $EX_CPP || ( $BlockRepeat && $Mode & $EX_REP )){
 		while( $bReplaced ){
 			$bReplaced = 0;
 			$Line = '';
+			
+			if(
+				$BlockRepeat && $Mode & $EX_REP &&
+				s/%(?:\{(.+?)\})?([+\-\d\.#]*[%cCdiouxXeEfgGnpsSb])/ExpandPrintfFmtSub( $2, $1 )/ge
+			){
+				$bReplaced = 1;
+			}
 			
 			while( /(.*?)\b($CSymbol)\b(.*)/s ){
 				$Line .= $1;
