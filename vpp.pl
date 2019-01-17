@@ -570,7 +570,6 @@ sub StartModule{
 			# port_list が input/output 付きの新形式なら，$PortDef はその中身になる
 			$PortDef =~ s/;([^;]*)$/$1/;
 			$PortDef =~ s/;/,/g;
-			$PortDef = ExpandMacro( $PortDef, $EX_STR | $EX_COMMENT | $EX_NOREAD );
 		}else{
 			# port_list が信号名しか無い旧形式なら，$PortDef は空
 			$PortDef = '';
@@ -606,7 +605,7 @@ sub StartModule{
 			if( $PortDef || $PortDef2 ){
 				$PortDef .= "\t,\n" if( $PortDef && $PortDef2 );
 				$PortDef2 =~ s/,([^,]*)$/$1/;
-				PrintRTL( "$ParamDef(\n$PortDef$PortDef2)" );
+				PrintRTL( ExpandMacro( "$ParamDef(\n$PortDef$PortDef2)", $EX_STR | $EX_COMMENT | $EX_NOREAD ));
 			}
 		}
 		
