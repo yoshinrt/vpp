@@ -303,6 +303,7 @@ sub CppParser {
 	my $i;
 	my $BlockMode2;
 	my $LineCnt = $.;
+	my $LineRaw;
 	
 	while( $_ = ReadLine( $fpIn )){
 		# 過去表記の互換性
@@ -328,6 +329,7 @@ sub CppParser {
 			s/\s+$//g;
 			s/^\s*#\s*//;
 			
+			$LineRaw = $_;
 			$_ = ExpandMacro( $_, $EX_REP | $EX_RMCOMMENT );
 			
 			# $DefineTbl{ $1 }{ args }:  >=0: 引数  <0: 可変引数  's': 単純マクロ
@@ -396,6 +398,8 @@ sub CppParser {
 			}elsif( /^enum_p\b(.*)/ ){
 				Enumerate( $1, 1 );
 			}elsif( !$BlockNoOutput ){
+				$_ = ExpandMacro( $LineRaw, $EX_RMCOMMENT );
+				
 				if( /^define\s+($CSymbol)$/ ){
 					# 名前だけ定義
 					AddCppMacro( $1 );
@@ -431,7 +435,7 @@ sub CppParser {
 				}elsif( /^require\s+(.*)/ ){
 					Require( ExpandMacro( $1, $EX_INTFUNC | $EX_STR | $EX_RMCOMMENT ));
 				}elsif( !$BlockNoOutput ){
-					PrintRTL( ExpandMacro( $_, $EX_CPP | $EX_REP ));
+					Error( "syntax error (cpp directive)" );
 				}
 			}
 		}elsif( !$BlockNoOutput ){
