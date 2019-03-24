@@ -217,7 +217,7 @@ sub ReadLine {
 	my( $Line );
 	my( $LineCnt ) = $.;
 	
-	while( m@(//|/\*|(?<!\\)")@ ){
+	while( m@(//|/\*|(?<!\\)"|\(\*)@ ){
 		$Cnt = $#CommentPool + 1;
 		
 		if( $1 eq '//' ){
@@ -229,12 +229,15 @@ sub ReadLine {
 				Error( 'unterminated "' );
 				s/"//;
 			}
-		}elsif( s#(/\*.*?\*/)#<__COMMENT_${Cnt}__>#s ){
-			# /* ... */ の組が発見されたら，置換
+		}elsif(
+			$1 eq '/*' && s#(/\*.*?\*/)#<__COMMENT_${Cnt}__>#s ||
+			$1 eq '(*' && s#(\(\*.*?\*\))#<__COMMENT_${Cnt}__>#s
+		){
+			# /* ... */ (* ... *) の組が発見されたら，置換
 			push( @CommentPool, $1 ) if( $VppStage == $VPPSTAGE_CPP );
 			$ResetLinePos = $.;
 		}else{
-			# /* ... */ の組が発見されないので，発見されるまで行 cat
+			# /* ... */ (* ... ) の組が発見されないので，発見されるまで行 cat
 			if( !( $Line = ReadLineSub( $_[ 0 ] ))){
 				Error( 'unterminated */', $LineCnt );
 				last;
