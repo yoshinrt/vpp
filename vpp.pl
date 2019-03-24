@@ -616,6 +616,10 @@ sub StartModule{
 			}
 		}
 		
+		elsif( $iModuleMode & $MODMODE_TEST ){
+			PrintRTL( ExpandMacro( $ParamDef, $EX_STR | $EX_COMMENT | $EX_NOREAD ));
+		}
+		
 		PrintRTL( ";\n" );
 		
 		# in/out/reg/wire ¿Î∏¿Ω–Œœ
