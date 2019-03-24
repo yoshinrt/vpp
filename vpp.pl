@@ -54,7 +54,7 @@ my $MODMODE_PROGRAM	= $enum <<= 1;
 
 my $CSymbol			= qr/\b[_a-zA-Z]\w*\b/;
 my $CSymbol2		= qr/\b[_a-zA-Z\$]\w*\b/;
-my $SigTypeDef		= qr/\b(?:parameter|wire|reg|input|output(?:\s+reg)?|inout)\b/;
+my $SigTypeDef		= qr/\b(?:parameter|wire|reg|input(?:\s+wire)?|output(?:\s+reg|\s+wire)?|inout)\b/;
 my $DefSkelPort		= "(.*)";
 my $DefSkelWire		= "\$1";
 
