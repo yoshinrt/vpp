@@ -1020,7 +1020,7 @@ sub GetModuleIO{
 	
 	if( !open( $fp, "< $ModuleFile" )){
 		Error( "can't open file \"$ModuleFile\"" );
-		return( "" );
+		return;
 	}
 	
 	# module の先頭を探す
@@ -1043,7 +1043,7 @@ sub GetModuleIO{
 	
 	if( !$bFound ){
 		Error( "can't find module \"$ModuleName\@$ModuleFile\"" );
-		return( "" );
+		return;
 	}
 	
 	$_ = $Buf;
