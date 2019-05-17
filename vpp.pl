@@ -1013,6 +1013,7 @@ sub GetModuleIO{
 	local $_;
 	my( $ModuleName, $ModuleFile, $ModuleFileDisp ) = @_;
 	my( $Buf, $bFound, $fp );
+	my $LineNo = $.;
 	
 	if( exists( $ModuleIOTbl{ "$ModuleName\t$ModuleFile" })){
 		return $ModuleIOTbl{ "$ModuleName\t$ModuleFile" };
@@ -1046,7 +1047,7 @@ sub GetModuleIO{
 	close( $fp );
 	
 	if( !$bFound ){
-		Error( "can't find module \"$ModuleName\@$ModuleFileDisp\"" );
+		Error( "can't find module \"$ModuleName\@$ModuleFileDisp\"", $LineNo );
 		return;
 	}
 	
