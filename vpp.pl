@@ -872,8 +872,10 @@ sub DefineInst{
 	$_ = $5;
 	$ModuleInst =~ s/\*/$ModuleName/g;
 	
+	my $ModuleFileDisp = $ModuleFile;
 	if( $ModuleFile eq "*" ){
-		$ModuleFile = $CppFile;
+		$ModuleFile		= $CppFile;
+		$ModuleFileDisp	= $ARGV[ 0 ];
 	}
 	
 	# read port->wire tmpl list
@@ -887,7 +889,7 @@ sub DefineInst{
 	
 	# get sub module's port list
 	
-	my $ModuleIO = GetModuleIO( $ModuleName, $ModuleFile );
+	my $ModuleIO = GetModuleIO( $ModuleName, $ModuleFile, $ModuleFileDisp );
 	
 	# input/output 文 1 行ごとの処理
 	
@@ -1044,7 +1046,7 @@ sub GetModuleIO{
 	close( $fp );
 	
 	if( !$bFound ){
-		Error( "can't find module \"$ModuleName\@$ModuleFile\"" );
+		Error( "can't find module \"$ModuleName\@$ModuleFileDisp\"" );
 		return;
 	}
 	
