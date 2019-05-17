@@ -201,11 +201,14 @@ sub main{
 		
 		unlink( $ListFile );
 		
+		print( "=== VPPSTAGE_VPP ===\n" ) if( $Debug >= 2 );
 		VppParser( $VPPSTAGE_VPP );
+		
+		print( "=== VPPSTAGE_VPPOUT ===\n" ) if( $Debug >= 2 );
 		VppParser( $VPPSTAGE_VPPOUT ) if( !$ErrorCnt );
 	}
 	
-	unlink( $CppFile );
+	unlink( $CppFile ) if( $Debug < 4 );
 }
 
 ### 1¹ÔÆÉ¤à ##################################################################
@@ -257,6 +260,8 @@ sub ReadLineSub {
 		if( $VppStage && /^#\s*(\d+)\s+"(.*)"/ ){
 			$. = $1 - 1;
 			$DefFile = ( $2 eq "-" ) ? $ARGV[ 0 ] : $2;
+			printf( "include $DefFile (%d)\n", $. + 1 ) if( $Debug >= 2 );
+			
 		}elsif( m@^\s*//#@ ){
 			$ResetLinePos = $.;
 			next;
@@ -1013,7 +1018,6 @@ sub GetModuleIO{
 	local $_;
 	my( $ModuleName, $ModuleFile, $ModuleFileDisp ) = @_;
 	my( $Buf, $bFound, $fp );
-	my $LineNo = $.;
 	
 	if( exists( $ModuleIOTbl{ "$ModuleName\t$ModuleFile" })){
 		return $ModuleIOTbl{ "$ModuleName\t$ModuleFile" };
@@ -1022,6 +1026,9 @@ sub GetModuleIO{
 	$ModuleFileDisp = $ModuleFile if( !defined( $ModuleFileDisp ));
 	
 	$bFound = 0;
+	
+	my $LineNo		= $.;
+	my $PrevDefFile	= $DefFile;
 	
 	if( !open( $fp, "< $ModuleFile" )){
 		Error( "can't open file \"$ModuleFile\"" );
@@ -1046,8 +1053,11 @@ sub GetModuleIO{
 	
 	close( $fp );
 	
+	$. = $LineNo;
+	$DefFile = $PrevDefFile;
+	
 	if( !$bFound ){
-		Error( "can't find module \"$ModuleName\@$ModuleFileDisp\"", $LineNo );
+		Error( "can't find module \"$ModuleName\@$ModuleFileDisp\"" );
 		return;
 	}
 	
