@@ -891,115 +891,117 @@ sub DefineInst{
 	
 	# input/output 文 1 行ごとの処理
 	
-	foreach my $io ( @$ModuleIO ){
-		
-		( $InOut, $BitWidth, @IOList )	= split( /\t/, $io );
-		next if( $InOut !~ /^(?:input|output|inout)$/ );
-		
-		foreach $Port ( @IOList ){
-			( $Wire, $Attr ) = ConvPort2Wire( $Port, $BitWidth, $InOut );
+	if( defined( $ModuleIO )){
+		foreach my $io ( @$ModuleIO ){
 			
-			if( !( $Attr & $ATTR_NC )){
-				next if( $Attr & $ATTR_IGNORE );
+			( $InOut, $BitWidth, @IOList )	= split( /\t/, $io );
+			next if( $InOut !~ /^(?:input|output|inout)$/ );
+			
+			foreach $Port ( @IOList ){
+				( $Wire, $Attr ) = ConvPort2Wire( $Port, $BitWidth, $InOut );
 				
-				# hoge(\d) --> hoge[$1] 対策
-				
-				$WireBus = $Wire;
-				if( $WireBus  =~ /(.*)\[(\d+(?::\d+)?)\]$/ ){
+				if( !( $Attr & $ATTR_NC )){
+					next if( $Attr & $ATTR_IGNORE );
 					
-					$WireBus		= $1;
-					$BitWidthWire	= $2;
-					$BitWidthWire	= $BitWidthWire =~ /^\d+$/ ? "$BitWidthWire:$BitWidthWire" : $BitWidthWire;
+					# hoge(\d) --> hoge[$1] 対策
 					
-					# instance の tmpl 定義で
-					#  hoge  hoge[1] などのように wire 側に bit 指定が
-					# ついたとき wire の実際のサイズがわからないため
-					# ATTR_WEAK_W 属性をつける
-					$Attr |= $ATTR_WEAK_W;
-				}else{
-					$BitWidthWire	= $BitWidth;
-					
-					# BusSize が [BIT_DMEMADR-1:0] などのように不明の場合
-					# そのときは $ATTR_WEAK_W 属性をつける
-					if( $BitWidth ne '' && $BitWidth !~ /^\d+:\d+$/ ){
+					$WireBus = $Wire;
+					if( $WireBus  =~ /(.*)\[(\d+(?::\d+)?)\]$/ ){
+						
+						$WireBus		= $1;
+						$BitWidthWire	= $2;
+						$BitWidthWire	= $BitWidthWire =~ /^\d+$/ ? "$BitWidthWire:$BitWidthWire" : $BitWidthWire;
+						
+						# instance の tmpl 定義で
+						#  hoge  hoge[1] などのように wire 側に bit 指定が
+						# ついたとき wire の実際のサイズがわからないため
+						# ATTR_WEAK_W 属性をつける
 						$Attr |= $ATTR_WEAK_W;
-					}
-				}
-				
-				# 数字だけが指定された場合，bit幅表記をつける
-				if( $Wire =~ /^\d+$/ ){
-					$Wire = sprintf( "%d'd$Wire", GetBusWidth2( $BitWidth ));
-				}
-				
-				elsif( $Wire !~ /^\d+/ ){
-					# wire list に登録
-					if( $VppStage == $VPPSTAGE_VPP ){
-						$Attr |= ( $InOut eq "input" )	? $ATTR_REF		:
-								 ( $InOut eq "output" )	? $ATTR_FIX		:
-														  $ATTR_BYDIR	;
+					}else{
+						$BitWidthWire	= $BitWidth;
 						
-						# wire 名を修正
-						
-						$WireBus =~ s/\d+'[hdob]\d+//g;
-						$WireBus =~ s/[\s{}]//g;
-						$WireBus =~ s/\b\d+\b//g;
-						
-						@_ = split( /,+/, $WireBus );
-						
-						if( $#_ > 0 ){
-							# { ... , ... } 等，concat 信号が接続されている
-							foreach $WireBus ( @_ ){
-								next if( $WireBus =~ /^\d/ ); # 定数スキップ
-								$WireBus =~ s/\[.*\]//;
-								next if( $WireBus eq '' );
-								RegisterWire(
-									$WireBus,
-									'?',
-									$Attr |= $ATTR_WEAK_W,
-									$CurModuleName
-								);
-							}
-						}else{
-							RegisterWire(
-								$WireBus,
-								$BitWidthWire,
-								$Attr,
-								$CurModuleName
-							) if( $WireBus ne '' );
+						# BusSize が [BIT_DMEMADR-1:0] などのように不明の場合
+						# そのときは $ATTR_WEAK_W 属性をつける
+						if( $BitWidth ne '' && $BitWidth !~ /^\d+:\d+$/ ){
+							$Attr |= $ATTR_WEAK_W;
 						}
 					}
 					
-					# wire の bit size mismatch 解消
+					# 数字だけが指定された場合，bit幅表記をつける
+					if( $Wire =~ /^\d+$/ ){
+						$Wire = sprintf( "%d'd$Wire", GetBusWidth2( $BitWidth ));
+					}
 					
-					if( $BitWidth ne ( $WireListHash->{ $CurModuleName }{ $Wire }{ width } || '' )){
-						$Wire = $Wire . ( $BitWidth eq '' ? '[0]' : "[$BitWidth]" );
+					elsif( $Wire !~ /^\d+/ ){
+						# wire list に登録
+						if( $VppStage == $VPPSTAGE_VPP ){
+							$Attr |= ( $InOut eq "input" )	? $ATTR_REF		:
+									 ( $InOut eq "output" )	? $ATTR_FIX		:
+															  $ATTR_BYDIR	;
+							
+							# wire 名を修正
+							
+							$WireBus =~ s/\d+'[hdob]\d+//g;
+							$WireBus =~ s/[\s{}]//g;
+							$WireBus =~ s/\b\d+\b//g;
+							
+							@_ = split( /,+/, $WireBus );
+							
+							if( $#_ > 0 ){
+								# { ... , ... } 等，concat 信号が接続されている
+								foreach $WireBus ( @_ ){
+									next if( $WireBus =~ /^\d/ ); # 定数スキップ
+									$WireBus =~ s/\[.*\]//;
+									next if( $WireBus eq '' );
+									RegisterWire(
+										$WireBus,
+										'?',
+										$Attr |= $ATTR_WEAK_W,
+										$CurModuleName
+									);
+								}
+							}else{
+								RegisterWire(
+									$WireBus,
+									$BitWidthWire,
+									$Attr,
+									$CurModuleName
+								) if( $WireBus ne '' );
+							}
+						}
+						
+						# wire の bit size mismatch 解消
+						
+						if( $BitWidth ne ( $WireListHash->{ $CurModuleName }{ $Wire }{ width } || '' )){
+							$Wire = $Wire . ( $BitWidth eq '' ? '[0]' : "[$BitWidth]" );
+						}
 					}
 				}
+				
+				# .hoge( hoge ), の list を出力
+				
+				PrintRTL( $bFirst ? "(\n" : ",\n" );
+				$bFirst = 0;
+				
+				$tmp = TabSpace( '', $tab0 );
+				$Wire =~ s/\$n//g;		#z $n の削除
+				$tmp = TabSpace( "$tmp.$Port", $tab1 );
+				$tmp = TabSpace( "$tmp( $Wire", $tab2 );
+				$tmp .= ")";
+				
+				PrintRTL( "$tmp" );
 			}
-			
-			# .hoge( hoge ), の list を出力
-			
-			PrintRTL( $bFirst ? "(\n" : ",\n" );
-			$bFirst = 0;
-			
-			$tmp = TabSpace( '', $tab0 );
-			$Wire =~ s/\$n//g;		#z $n の削除
-			$tmp = TabSpace( "$tmp.$Port", $tab1 );
-			$tmp = TabSpace( "$tmp( $Wire", $tab2 );
-			$tmp .= ")";
-			
-			PrintRTL( "$tmp" );
 		}
+		
+		# SkelList 未使用警告
+		
+		WarnUnusedSkelList( $ModuleInst, $LineNo ) if( $VppStage == $VPPSTAGE_VPP );
 	}
 	
 	# instance の footer を出力
 	
 	PrintRTL( "\n\t)" ) if( !$bFirst );
 	PrintRTL( ";\n" );
-	
-	# SkelList 未使用警告
-	
-	WarnUnusedSkelList( $ModuleInst, $LineNo ) if( $VppStage == $VPPSTAGE_VPP );
 }
 
 ### search module & get IO definition ########################################
