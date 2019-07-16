@@ -53,7 +53,6 @@ my $MODMODE_TESTINC	= $MODMODE_TEST | $MODMODE_INC;
 my $MODMODE_PROGRAM	= $enum <<= 1;
 
 my $CSymbol			= qr/\b[_a-zA-Z]\w*\b/;
-my $CSymbol2		= qr/\b[_a-zA-Z\$]\w*\b/;
 my $SigTypeDef		= qr/\b(?:parameter|wire|reg|input(?:\s+wire)?|output(?:\s+reg|\s+wire)?|inout)\b/;
 my $DefSkelPort		= "(.*)";
 my $DefSkelWire		= "\$1";
@@ -2049,7 +2048,7 @@ sub IfBlockEval {
 	local( $_ ) = @_;
 	
 	# defined 置換
-	return Evaluate( ExpandMacro( $_, $EX_CPP | $EX_STR | $EX_NOREAD | $EX_IF_EVAL ));
+	return Evaluate( ExpandMacro( $_, $EX_CPP | $EX_STR | $EX_NOREAD | $EX_IF_EVAL | $EX_INTFUNC ));
 }
 
 ### CPP マクロ展開 ###########################################################
@@ -2082,18 +2081,33 @@ sub ExpandMacro {
 				$bReplaced = 1;
 			}
 			
-			while( /(.*?)\b($CSymbol)\b(.*)/s ){
+			while( /(.*?)(\$?$CSymbol)(.*)/s ){
 				$Line .= $1;
 				( $Name, $_ ) = ( $2, $3 );
 				
 				if( $Name eq '__FILE__' ){		$Line .= $DefFile;
 				}elsif( $Name eq '__LINE__' ){	$Line .= $.;
 				}elsif(
-					$Name eq 'defined' && $EX_IF_EVAL &&
-					( s/^\s*($CSymbol)\b// || s/^s*\(\s*($CSymbol)\s*\)// )
+					$Name eq 'defined' && ( $Mode & $EX_IF_EVAL ) &&
+					( s/^\s*($CSymbol)// || s/^s*\(\s*($CSymbol)\s*\)// )
 				){
 					# defined マクロ
 					$Line .= defined( $DefineTbl{ $1 } ) ? '1' : '0';
+					
+				}elsif(( $Mode & $EX_INTFUNC ) && $Name eq 'sizeof' && s/^\s*($OpenClose)// ){
+					# sizeof
+					$Line .= SizeOf( $1, $Mode );
+					$bReplaced = 1;
+					
+				}elsif(( $Mode & $EX_INTFUNC ) && $Name eq 'typeof' && s/^\s*($OpenClose)// ){
+					# typeof
+					$Line .= TypeOf( $1, $Mode );
+					$bReplaced = 1;
+					
+				}elsif(( $Mode & $EX_INTFUNC ) && $Name eq '$Eval' && s/^\s*($OpenClose)// ){
+					# $Eval
+					$Line .= Evaluate( ExpandMacro( $1, $EX_CPP | $EX_STR | $EX_NOREAD ));
+					$bReplaced = 1;
 					
 				}elsif( !defined( $DefineTbl{ $Name } )){
 					# マクロではない
@@ -2177,12 +2191,6 @@ sub ExpandMacro {
 		
 		# トークン連結演算子 ##
 		$bReplaced |= s/\s*##\s*//g;
-	}
-	
-	if( $Mode & $EX_INTFUNC ){
-		s/\bsizeof($OpenClose)/SizeOf( $1, $Mode )/ge;
-		s/\btypeof($OpenClose)/TypeOf( $1, $Mode )/ge;
-		s/\$Eval($OpenClose)/Evaluate( ExpandMacro( $1 , $EX_STR | $EX_NOREAD ))/ge;
 	}
 	
 	if( $Mode & $EX_RMSTR ){
