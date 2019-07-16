@@ -35,7 +35,6 @@ my $BLKMODE_IF		= $enum++;	# if ブロック
 $enum = 1;
 my $EX_CPP			= $enum;		# CPP マクロ展開
 my $EX_REP			= $enum <<= 1;	# repeat マクロ展開
-my $EX_INTFUNC		= $enum <<= 1;	# sizeof, typeof 展開
 my $EX_STR			= $enum <<= 1;	# 文字列リテラル
 my $EX_RMSTR		= $enum <<= 1;	# 文字列リテラル削除
 my $EX_COMMENT		= $enum <<= 1;	# コメント
@@ -440,7 +439,7 @@ sub CppParser {
 				}elsif( /^include\s*(.*)/ ){
 					Include( $1 );
 				}elsif( /^require\s+(.*)/ ){
-					Require( ExpandMacro( $1, $EX_INTFUNC | $EX_STR | $EX_RMCOMMENT ));
+					Require( ExpandMacro( $1, $EX_CPP | $EX_STR | $EX_RMCOMMENT ));
 				}elsif( !$BlockNoOutput ){
 					Error( "syntax error (cpp directive)" );
 				}
@@ -484,7 +483,7 @@ sub VppParser {
 	
 	while( $_ = ReadLine( $fpIn )){
 		( $Word, $Line ) = GetWord(
-			ExpandMacro( $_, $EX_INTFUNC | $EX_STR | $EX_RMCOMMENT )
+			ExpandMacro( $_, $EX_CPP | $EX_STR | $EX_RMCOMMENT )
 		);
 		
 		if    ( $Word eq 'module'			){ StartModule( $Line, $MODMODE_NORMAL );
@@ -505,7 +504,7 @@ sub VppParser {
 			if( $Word =~ /^_(?:end)?(?:module|program)$/ ){
 				$_ =~ s/\b_((?:end)?(?:module|program))\b/$1/;
 			}
-			PrintRTL( ExpandMacro( $_, $EX_INTFUNC | $EX_STR | $EX_COMMENT ));
+			PrintRTL( ExpandMacro( $_, $EX_CPP | $EX_STR | $EX_COMMENT ));
 		}
 	}
 	
@@ -532,7 +531,7 @@ sub StartModule{
 	my $PortDef		= '';
 	my $ParamDef	= '';
 	
-	( $CurModuleName, $_ ) = GetWord( ExpandMacro( $_, $EX_INTFUNC | $EX_RMCOMMENT | $EX_NOREAD ));
+	( $CurModuleName, $_ ) = GetWord( ExpandMacro( $_, $EX_CPP | $EX_RMCOMMENT | $EX_NOREAD ));
 	
 	#PrintRTL( SkipToSemiColon( $_ ));
 	#SkipToSemiColon( $_ );
@@ -551,7 +550,7 @@ sub StartModule{
 	
 	if( !/^\s*;/ ){
 		while( $_ = ReadLine( $fpIn )){
-			$_ = ExpandMacro( $_, $EX_INTFUNC );
+			$_ = ExpandMacro( $_, $EX_CPP );
 			
 			last if( /\s*\);/ );
 			next if( /^\s*\(\s*$/ || /^#/ );
@@ -1040,11 +1039,11 @@ sub GetModuleIO{
 		if( $bFound ){
 			# module の途中
 			last if( /\bend(?:module|program)\b/ );
-			$Buf .= ExpandMacro( $_, $EX_INTFUNC | $EX_RMSTR | $EX_RMCOMMENT | $EX_NOSIGINFO );
+			$Buf .= ExpandMacro( $_, $EX_CPP | $EX_RMSTR | $EX_RMCOMMENT | $EX_NOSIGINFO );
 		}else{
 			# module をまだ見つけていない
 			if( /\b(?:test)?(?:module|program)(?:_inc)?\s+(.+)/ ){
-				$_ = ExpandMacro( $1, $EX_INTFUNC | $EX_NOREAD | $EX_NOSIGINFO );
+				$_ = ExpandMacro( $1, $EX_CPP | $EX_NOREAD | $EX_NOSIGINFO );
 				$bFound = 1 if( /^$ModuleName\b/ );
 			}
 		}
@@ -1237,7 +1236,7 @@ sub ReadSkelList{
 	);
 	
 	while( $_ = ReadLine( $fpIn )){
-		$_ = ExpandMacro( $_, $EX_INTFUNC | $EX_STR | $EX_RMCOMMENT );
+		$_ = ExpandMacro( $_, $EX_CPP | $EX_STR | $EX_RMCOMMENT );
 		s/\/\/.*//;
 		s/#.*//;
 		next if( /^\s*$/ );
@@ -1860,7 +1859,7 @@ sub ExecPerl {
 	$PrintBuf = $PrevPrintBuf;
 	
 	$PerlBuf =~ s/^\s*#.*$//gm;
-	$PerlBuf = ExpandMacro( $PerlBuf, $EX_INTFUNC | $EX_STR | $EX_COMMENT | $EX_NOREAD );
+	$PerlBuf = ExpandMacro( $PerlBuf, $EX_CPP | $EX_STR | $EX_COMMENT | $EX_NOREAD );
 	
 	if( $Debug >= 2 ){
 		print( "\n=========== perl code =============\n" );
@@ -2048,7 +2047,7 @@ sub IfBlockEval {
 	local( $_ ) = @_;
 	
 	# defined 置換
-	return Evaluate( ExpandMacro( $_, $EX_CPP | $EX_STR | $EX_NOREAD | $EX_IF_EVAL | $EX_INTFUNC ));
+	return Evaluate( ExpandMacro( $_, $EX_CPP | $EX_STR | $EX_NOREAD | $EX_IF_EVAL ));
 }
 
 ### CPP マクロ展開 ###########################################################
@@ -2094,17 +2093,17 @@ sub ExpandMacro {
 					# defined マクロ
 					$Line .= defined( $DefineTbl{ $1 } ) ? '1' : '0';
 					
-				}elsif(( $Mode & $EX_INTFUNC ) && $Name eq 'sizeof' && s/^\s*($OpenClose)// ){
+				}elsif( $Name eq 'sizeof' && s/^\s*($OpenClose)// ){
 					# sizeof
 					$Line .= SizeOf( $1, $Mode );
 					$bReplaced = 1;
 					
-				}elsif(( $Mode & $EX_INTFUNC ) && $Name eq 'typeof' && s/^\s*($OpenClose)// ){
+				}elsif( $Name eq 'typeof' && s/^\s*($OpenClose)// ){
 					# typeof
 					$Line .= TypeOf( $1, $Mode );
 					$bReplaced = 1;
 					
-				}elsif(( $Mode & $EX_INTFUNC ) && $Name eq '$Eval' && s/^\s*($OpenClose)// ){
+				}elsif( $Name eq '$Eval' && s/^\s*($OpenClose)// ){
 					# $Eval
 					$Line .= Evaluate( ExpandMacro( $1, $EX_CPP | $EX_STR | $EX_NOREAD ));
 					$bReplaced = 1;
