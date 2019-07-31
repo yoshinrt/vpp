@@ -742,10 +742,28 @@ sub FormatSigDef {
 
 ### Evaluate #################################################################
 
+sub VerilogDigit2C {
+	local( $_ ) = @_;
+	
+	s/_//g;
+	
+	if( /'([bodh])0*(\w+)/ ){
+		return "0b$2" if( $1 eq 'b' );
+		return "0$2"  if( $1 eq 'o' );
+		return "$2"   if( $1 eq 'd' );
+		return "0x$2";
+	}
+	
+	return $_;
+}
+
 sub Evaluate {
 	local( $_ ) = @_;
 	
 	s/\$Eval\b//g;
+	
+	s/((?:\b\d+)?'[bodh][\dA-Fa-f_]+)\b/VerilogDigit2C( $1 )/ge;
+	
 	$_ = eval( $_ );
 	if( $@ ne '' ){
 		$_ = $@; s/[\x0D\x0A]//g;
@@ -755,11 +773,14 @@ sub Evaluate {
 	return( $_ );
 }
 
-sub Evaluate2 {
+sub EvaluateArray {
 	local( $_ ) = @_;
 	local( @_ );
 	
 	s/\$Eval\b//g;
+	
+	s/((?:\b\d+)?'[bodh][\dA-Fa-f_]+)\b/VerilogDigit2C( $1 )/ge;
+	
 	@_ = eval( $_ );
 	if( $@ ne '' ){
 		$_ = $@; s/[\x0D\x0A]//g;
@@ -1721,7 +1742,7 @@ sub RepeatOutput{
 		$RepCntEd = "($2";
 	}
 	
-	( $RepCntSt, $RepCntEd, $Step ) = Evaluate2( $RepCntEd );
+	( $RepCntSt, $RepCntEd, $Step ) = EvaluateArray( $RepCntEd );
 	
 	if( !defined( $RepCntEd )){
 		if( $RepCntSt < 0 ){
