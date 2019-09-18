@@ -998,7 +998,10 @@ sub DefineInst{
 						
 						# wire ¤Î bit size mismatch ²ò¾Ã
 						
-						if( $BitWidth ne ( $WireListHash->{ $CurModuleName }{ $Wire }{ width } || '' )){
+						if(
+							$BitWidth ne ( $WireListHash->{ $CurModuleName }{ $Wire }{ width } || '' ) &&
+							$Wire !~ /\]$/
+						){
 							$Wire = $Wire . ( $BitWidth eq '' ? '[0]' : "[$BitWidth]" );
 						}
 					}
