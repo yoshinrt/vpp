@@ -1951,7 +1951,7 @@ sub Enumerate{
 	
 	# get typedef name
 	
-	if( /(.+)({.*)/ ){
+	if( /(.+)(\{.*)/ ){
 		$TypeName	= $1;
 		$_			= $2;
 	}else{
