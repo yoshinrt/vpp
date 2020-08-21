@@ -854,7 +854,6 @@ sub DefineInst{
 	my(
 		$Port,
 		$Wire,
-		$WireBus,
 		$Attr,
 		
 		@IOList,
@@ -923,79 +922,79 @@ sub DefineInst{
 			foreach $Port ( @IOList ){
 				( $Wire, $Attr ) = ConvPort2Wire( $Port, $BitWidth, $InOut );
 				
-				if( !( $Attr & $ATTR_NC )){
-					next if( $Attr & $ATTR_IGNORE );
+				next if( $Attr & $ATTR_IGNORE );
+				
+				# 数字だけが指定された場合，bit幅表記をつける
+				if( !( $Attr & $ATTR_NC ) && $Wire =~ /^\d+$/ ){
+					$Wire = sprintf( "%d'd$Wire", GetBusWidth2( $BitWidth ));
+				}
+				
+				elsif( !( $Attr & $ATTR_NC )){
 					
-					# hoge(\d) --> hoge[$1] 対策
+					my $WireExp = $Wire; $WireExp =~ s/\s+//g;
+					my $WireName;
 					
-					$WireBus = $Wire;
-					if( $WireBus  =~ /(.*)\[(\d+(?::\d+)?)\]$/ ){
+					# $Wire が (数式を含まない) C symbol か?
+					my $bSimpleWire = ( $Wire =~ /^$CSymbol$/ );
+					
+					# 式に含まれた wire 毎の処理
+					while( $WireExp ){
+						$WireExp =~ s/^[^_\w]+//g;
 						
-						$WireBus		= $1;
-						$BitWidthWire	= $2;
-						$BitWidthWire	= $BitWidthWire =~ /^\d+$/ ? "$BitWidthWire:$BitWidthWire" : $BitWidthWire;
-						
-						# instance の tmpl 定義で
-						#  hoge  hoge[1] などのように wire 側に bit 指定が
-						# ついたとき wire の実際のサイズがわからないため
-						# ATTR_WEAK_W 属性をつける
-						$Attr |= $ATTR_WEAK_W;
-					}else{
-						$BitWidthWire	= $BitWidth;
-						
-						# BusSize が [BIT_DMEMADR-1:0] などのように不明の場合
-						# そのときは $ATTR_WEAK_W 属性をつける
-						if( $BitWidth ne '' && $BitWidth !~ /^\d+:\d+$/ ){
+						# hoge[...] の場合
+						if( $WireExp =~ /^($CSymbol)\[(.+?)](.*)/ ){
+							
+							$WireExp		= $3;
+							$WireName		= $1;
+							$BitWidthWire	= $2;
+							$BitWidthWire	= $BitWidthWire =~ /:/ ? $BitWidthWire : "$BitWidthWire:$BitWidthWire";
+							
+							# instance の tmpl 定義で
+							#  hoge  hoge[1] などのように wire 側に bit 指定が
+							# ついたとき wire の実際のサイズがわからないため
+							# ATTR_WEAK_W 属性をつける
 							$Attr |= $ATTR_WEAK_W;
 						}
-					}
-					
-					# 数字だけが指定された場合，bit幅表記をつける
-					if( $Wire =~ /^\d+$/ ){
-						$Wire = sprintf( "%d'd$Wire", GetBusWidth2( $BitWidth ));
-					}
-					
-					elsif( $Wire !~ /^\d+/ ){
+						
+						# bit select がつかない wire
+						elsif( $WireExp =~ /^($CSymbol)(.*)/ ){
+							( $WireName, $WireExp ) = ( $1, $2 );
+							
+							# wire width は port width となる
+							$BitWidthWire	= $BitWidth;
+							
+							# BusSize が [BIT_DMEMADR-1:0] などのように不明の場合
+							#   または $WireExp が simple wire でない場合，
+							# そのときは $ATTR_WEAK_W 属性をつける
+							if( !$bSimpleWire || $BitWidth ne '' && $BitWidth !~ /^\d+:\d+$/ ){
+								$Attr |= $ATTR_WEAK_W;
+							}
+						}
+						
+						# wire でない，たぶん定数
+						else{
+							$WireExp =~ s/^\d*'[\w_]+//;
+							next;
+						}
+						
 						# wire list に登録
 						if( $VppStage == $VPPSTAGE_VPP ){
 							$Attr |= ( $InOut eq "input" )	? $ATTR_REF		:
 									 ( $InOut eq "output" )	? $ATTR_FIX		:
 															  $ATTR_BYDIR	;
 							
-							# wire 名を修正
-							
-							$WireBus =~ s/\d+'[hdob]\d+//g;
-							$WireBus =~ s/[\s{}]//g;
-							$WireBus =~ s/\b\d+\b//g;
-							
-							@_ = split( /,+/, $WireBus );
-							
-							if( $#_ > 0 ){
-								# { ... , ... } 等，concat 信号が接続されている
-								foreach $WireBus ( @_ ){
-									next if( $WireBus =~ /^\d/ ); # 定数スキップ
-									$WireBus =~ s/\[.*\]//;
-									next if( $WireBus eq '' );
-									RegisterWire(
-										$WireBus,
-										'?',
-										$Attr |= $ATTR_WEAK_W,
-										$CurModuleName
-									);
-								}
-							}else{
-								RegisterWire(
-									$WireBus,
-									$BitWidthWire,
-									$Attr,
-									$CurModuleName
-								) if( $WireBus ne '' );
-							}
+							RegisterWire(
+								$WireName,
+								$BitWidthWire,
+								$Attr,
+								$CurModuleName
+							) if( $WireName ne '' );
 						}
 						
 						# wire の bit size mismatch 解消
 						
 						if(
+							$bSimpleWire &&
 							$BitWidth ne ( $WireListHash->{ $CurModuleName }{ $Wire }{ width } || '' ) &&
 							$Wire !~ /\]$/
 						){
@@ -1263,9 +1262,12 @@ sub ReadSkelList{
 		next if( /^\s*$/ );
 		last if( /^\s*\);/ );
 		
-		/^\s*(\S+)\s*(\S*)\s*(\S*)/;
+		$AttrLetter = '';
+		( $Port, $Wire ) = /^\s*(\S+)\s*(.*?)\s*$/;
 		
-		( $Port, $Wire, $AttrLetter ) = ( $1, $2, $3 );
+		if( $Wire =~ /^(\{.*\})\s+(\S+)$/ || $Wire =~ /^([^\{].*?)\s+(\S+)$/ ){
+			( $Wire, $AttrLetter ) = ( $1, $2 );
+		}
 		
 		if( $Wire =~ /^[MBU]?(?:NP|NC|W|I|O|IO|U|\*D)$/ ){
 			$AttrLetter = $Wire;
