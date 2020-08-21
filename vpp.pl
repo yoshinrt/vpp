@@ -52,6 +52,7 @@ my $MODMODE_TESTINC	= $MODMODE_TEST | $MODMODE_INC;
 my $MODMODE_PROGRAM	= $enum <<= 1;
 
 my $CSymbol			= qr/\b[_a-zA-Z]\w*\b/;
+my $CSymbol2		= qr/\b[_a-zA-Z][\w\$]*\b/;
 my $SigTypeDef		= qr/\b(?:parameter|wire|reg|input(?:\s+wire)?|output(?:\s+reg|\s+wire)?|inout)\b/;
 my $DefSkelPort		= "(.*)";
 my $DefSkelWire		= "\$1";
@@ -935,14 +936,14 @@ sub DefineInst{
 					my $WireName;
 					
 					# $Wire が (数式を含まない) C symbol か?
-					my $bSimpleWire = ( $Wire =~ /^$CSymbol$/ );
+					my $bSimpleWire = ( $Wire =~ /^$CSymbol2$/ );
 					
 					# 式に含まれた wire 毎の処理
 					while( $WireExp ){
 						$WireExp =~ s/^[^_\w]+//g;
 						
 						# hoge[...] の場合
-						if( $WireExp =~ /^($CSymbol)\[(.+?)](.*)/ ){
+						if( $WireExp =~ /^($CSymbol2)\[(.+?)](.*)/ ){
 							
 							$WireExp		= $3;
 							$WireName		= $1;
@@ -957,7 +958,7 @@ sub DefineInst{
 						}
 						
 						# bit select がつかない wire
-						elsif( $WireExp =~ /^($CSymbol)(.*)/ ){
+						elsif( $WireExp =~ /^($CSymbol2)(.*)/ ){
 							( $WireName, $WireExp ) = ( $1, $2 );
 							
 							# wire width は port width となる
