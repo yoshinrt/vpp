@@ -1054,6 +1054,8 @@ sub GetModuleIO{
 		return;
 	}
 	
+	$DefFile = $ModuleFile;
+	
 	# module の先頭を探す
 	
 	while( $_ = ReadLine( $fp )){
