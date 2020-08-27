@@ -1087,7 +1087,7 @@ sub GetModuleIO{
 	# delete comment
 	s/\btask\b.*?\bendtask\b//gs;
 	s/\bfunction\b.*?\bendfunction\b//gs;
-	s/^\s*`.*//g;
+	s/^\s*`.*//gm;
 	
 	# delete \n
 	s/[\x0D\x0A\t ]+/ /g;
@@ -1268,7 +1268,11 @@ sub ReadSkelList{
 		$AttrLetter = '';
 		( $Port, $Wire ) = /^\s*(\S+)\s*(.*?)\s*$/;
 		
-		if( $Wire =~ /^(\{.*\})\s+(\S+)$/ || $Wire =~ /^([^\{].*?)\s+(\S+)$/ ){
+		if(
+			$Wire =~ /^(\{.*\})\s+(\S+)$/ ||
+			$Wire =~ /^($OpenClose)\s+(\S+)$/ ||
+			$Wire !~ /^[\{\(]/ && $Wire =~ /^(.+)\s+(\S+)$/
+		){
 			( $Wire, $AttrLetter ) = ( $1, $2 );
 		}
 		
@@ -1995,7 +1999,7 @@ sub PrintAllInputs {
 	
 	$Param	=~ s/^\s*(\S+).*/$1/;
 	$Tab	=~ /^(\s*)/; $Tab = $1;
-	$_		= ();
+	$_		= "";
 	
 	foreach $Wire ( @{ $WireList->{ $CurModuleName }} ){
 		if( $Wire->{ name } =~ /^$Param$/ && QueryWireType( $Wire, '' ) eq 'input' ){
