@@ -172,7 +172,7 @@ sub main{
 	
 	CppParser();
 	
-	if( $Debug >= 2 ){
+	if( $Debug >= 3 ){
 		print( "=== macro ===\n" );
 		foreach $_ ( sort keys %DefineTbl ){
 			printf( "$_%s\t%s\n", $DefineTbl{ $_ }{ args } eq 's' ? '' : '()', $DefineTbl{ $_ }{ macro } );
@@ -200,14 +200,14 @@ sub main{
 		
 		unlink( $ListFile );
 		
-		print( "=== VPPSTAGE_VPP ===\n" ) if( $Debug >= 2 );
+		print( "=== VPPSTAGE_VPP ===\n" ) if( $Debug >= 3 );
 		VppParser( $VPPSTAGE_VPP );
 		
-		print( "=== VPPSTAGE_VPPOUT ===\n" ) if( $Debug >= 2 );
+		print( "=== VPPSTAGE_VPPOUT ===\n" ) if( $Debug >= 3 );
 		VppParser( $VPPSTAGE_VPPOUT ) if( !$ErrorCnt );
 	}
 	
-	unlink( $CppFile ) if( $Debug < 4 );
+	unlink( $CppFile ) if( !( $Debug >= 3 ));
 }
 
 ### 1行読む ##################################################################
@@ -256,7 +256,7 @@ sub ReadLineSub {
 		if( $VppStage && /^#\s*(\d+)\s+"(.*)"/ ){
 			$. = $1 - 1;
 			$DefFile = ( $2 eq "-" ) ? $ARGV[ 0 ] : $2;
-			printf( "include $DefFile (%d)\n", $. + 1 ) if( $Debug >= 2 );
+			printf( "include $DefFile (%d)\n", $. + 1 ) if( $Debug >= 3 );
 			
 		}elsif( m@^\s*//#@ ){
 			$ResetLinePos = $.;
@@ -673,7 +673,7 @@ sub RegisterModuleIO {
 				$Attr |= $ATTR_WEAK_W;
 			}
 			
-			RegisterWire( $Port, $BitWidth, $Attr, $ModuleName );
+			RegisterWire( $Port, $BitWidth, $Attr, $ModuleName, $Port );
 		}
 	}
 }
@@ -988,7 +988,8 @@ sub DefineInst{
 								$WireName,
 								$BitWidthWire,
 								$Attr,
-								$CurModuleName
+								$CurModuleName,
+								"$ModuleInst.$Port"
 							) if( $WireName ne '' );
 						}
 						
@@ -1402,7 +1403,7 @@ sub ReplaceGroup {
 
 sub RegisterWire{
 	
-	my( $Name, $BitWidth, $Attr, $ModuleName ) = @_;
+	my( $Name, $BitWidth, $Attr, $ModuleName, $DriverLoad ) = @_;
 	my( $Wire );
 	
 	my( $MSB0, $MSB1, $LSB0, $LSB1 );
@@ -1448,12 +1449,6 @@ sub RegisterWire{
 			}
 		}
 		
-		# 両方 inout 型なら，登録するほうを REF に変更
-		
-		if( $Wire->{ attr } & $Attr & $ATTR_INOUT ){
-			$Attr |= $ATTR_REF;
-		}
-		
 		# multiple driver 警告
 		if(
 			( $Wire->{ attr } & $Attr & $ATTR_FIX ) &&
@@ -1474,14 +1469,22 @@ sub RegisterWire{
 			$Wire->{ drv_width } = $BitWidth;
 		}
 		
+		# 両方 inout 型なら，REF を追加
+		
+		if( $Wire->{ attr } & $Attr & $ATTR_INOUT ){
+			$Wire->{ attr } |= $ATTR_REF;
+		}
+		
 		$Wire->{ attr } |= ( $Attr & ~$ATTR_WEAK_W );
 		
 	}else{
 		# 新規登録
 		$Wire = {
-			'name'	=> $Name,
-			'width'	=> $BitWidth,
-			'attr'	=> $Attr
+			'name'		=> $Name,
+			'width'		=> $BitWidth,
+			'attr'		=> $Attr,
+			'driver'	=> [],
+			'load'		=> []
 		};
 		
 		# out, inout かつ WEAK でないときのみ，drv bit を登録する
@@ -1493,6 +1496,16 @@ sub RegisterWire{
 		
 		push( @{ $WireList->{ $ModuleName }}, $Wire );
 		$WireListHash->{ $ModuleName }{ $Name } = $Wire;
+	}
+	
+	# driver, load を登録
+	if( $DriverLoad ){
+		if( $Attr & ( $ATTR_REF | $ATTR_BYDIR )){
+			push( @{ $Wire->{ load }}, $DriverLoad );
+		}
+		if( $Attr & ( $ATTR_FIX | $ATTR_BYDIR )){
+			push( @{ $Wire->{ driver }}, $DriverLoad );
+		}
 	}
 }
 
@@ -1529,10 +1542,12 @@ sub OutputWireList{
 		$Attr,
 		$Type,
 		$Wire,
+		$DriverLoad,
 	);
 	
 	$WireCntUnresolved = 0;
 	$WireCntAdded	   = 0;
+	$DriverLoad = '';
 	
 	foreach $Wire ( @{ $WireList->{ $CurModuleName }} ){
 		
@@ -1552,6 +1567,12 @@ sub OutputWireList{
 				if( !( $iModuleMode & $MODMODE_TEST ));
 		}
 		
+		if( $Debug >= 2 ){
+			$DriverLoad = "\t" .
+				join( ',', sort @{ $Wire->{ driver }}) . "\t" .
+				join( ',', sort @{ $Wire->{ load }});
+		}
+		
 		push( @WireListBuf, (
 			$Type .
 			(( $Attr & $ATTR_DEF )		? "d" :
@@ -1565,7 +1586,7 @@ sub OutputWireList{
 			(( $Attr & $ATTR_BYDIR )	? "B" : "-" ) .
 			(( $Attr & $ATTR_FIX )		? "F" : "-" ) .
 			(( $Attr & $ATTR_REF )		? "R" : "-" ) .
-			"\t$Wire->{ width }\t" . ( $Wire->{ drv_width } || '' ) . "\t$Wire->{ name }\n"
+			"\t$Wire->{ width }\t" . ( $Wire->{ drv_width } || '' ) . "\t$Wire->{ name }$DriverLoad\n"
 		));
 		
 		# bus width is weakly defined error
@@ -1891,7 +1912,7 @@ sub ExecPerl {
 	$PerlBuf =~ s/^\s*#.*$//gm;
 	$PerlBuf = ExpandMacro( $PerlBuf, $EX_CPP | $EX_STR | $EX_COMMENT | $EX_NOREAD );
 	
-	if( $Debug >= 2 ){
+	if( $Debug >= 3 ){
 		print( "\n=========== perl code =============\n" );
 		print( $PerlBuf );
 		print( "\n===================================\n" );
@@ -1899,7 +1920,7 @@ sub ExecPerl {
 	$_ = ();
 	$_ = eval( $PerlBuf );
 	Error( $@ ) if( $@ ne '' );
-	if( $Debug >= 2 ){
+	if( $Debug >= 3 ){
 		print( "\n=========== output code =============\n" );
 		print( $_ );
 		print( "\n===================================\n" );
@@ -2334,9 +2355,9 @@ sub Include {
 	}else{
 		$DefFile = $_;
 		PrintRTL( "# 1 \"$_\"\n" );
-		print( "including file '$_'...\n" ) if( $Debug >= 2 );
+		print( "including file '$_'...\n" ) if( $Debug >= 3 );
 		CppParser();
-		printf( "back to file '%s'...\n", $IncludeList[ $#IncludeList ]->{ FileName } ) if( $Debug >= 2 );
+		printf( "back to file '%s'...\n", $IncludeList[ $#IncludeList ]->{ FileName } ) if( $Debug >= 3 );
 	}
 	
 	$_ = pop( @IncludeList );
