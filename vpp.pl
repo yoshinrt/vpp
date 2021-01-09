@@ -962,6 +962,8 @@ sub DefineInst{
 							( $WireName, $WireExp ) = ( $1, $2 );
 							
 							# wire width は port width となる
+							#   ★bSimpleWire でない場合はおかしいけど
+							#     どのみち WEAK_W だから他で bit 幅確定が必要
 							$BitWidthWire	= $BitWidth;
 							
 							# BusSize が [BIT_DMEMADR-1:0] などのように不明の場合
@@ -997,8 +999,8 @@ sub DefineInst{
 						
 						if(
 							$bSimpleWire &&
-							$BitWidth ne ( $WireListHash->{ $CurModuleName }{ $Wire }{ width } || '' ) &&
-							$Wire !~ /\]$/
+							( $BitWidth eq '' || $BitWidth =~ /^\d+:\d+$/ ) &&
+							$BitWidth ne ( $WireListHash->{ $CurModuleName }{ $Wire }{ width } || '' )
 						){
 							$Wire = $Wire . ( $BitWidth eq '' ? '[0]' : "[$BitWidth]" );
 						}
