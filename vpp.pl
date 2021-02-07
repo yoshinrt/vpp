@@ -39,7 +39,6 @@ my $EX_STR			= $enum <<= 1;	# 文字列リテラル
 my $EX_RMSTR		= $enum <<= 1;	# 文字列リテラル削除
 my $EX_COMMENT		= $enum <<= 1;	# コメント
 my $EX_RMCOMMENT	= $enum <<= 1;	# コメント削除
-my $EX_NOREAD		= $enum <<= 1;	# $fpIn から追加読み込みしない ★機能していない
 my $EX_NOSIGINFO	= $enum <<= 1;	# $WireListHash 参照不可
 my $EX_IF_EVAL		= $enum <<= 1;	# ifdef 用，defined 展開，存在しないシンボルは 0 に変換
 
@@ -529,7 +528,7 @@ sub StartModule{
 	my $PortDef		= '';
 	my $ParamDef	= '';
 	
-	( $CurModuleName, $_ ) = GetWord( ExpandMacro( $_, $EX_CPP | $EX_RMCOMMENT | $EX_NOREAD ));
+	( $CurModuleName, $_ ) = GetWord( ExpandMacro( $_, $EX_CPP | $EX_RMCOMMENT ));
 	
 	#PrintRTL( SkipToSemiColon( $_ ));
 	#SkipToSemiColon( $_ );
@@ -613,12 +612,12 @@ sub StartModule{
 			if( $PortDef || $PortDef2 ){
 				$PortDef .= "\t,\n" if( $PortDef && $PortDef2 );
 				$PortDef2 =~ s/,([^,]*)$/$1/;
-				PrintRTL( ExpandMacro( "$ParamDef(\n$PortDef$PortDef2)", $EX_STR | $EX_COMMENT | $EX_NOREAD ));
+				PrintRTL( ExpandMacro( "$ParamDef(\n$PortDef$PortDef2)", $EX_STR | $EX_COMMENT ));
 			}
 		}
 		
 		elsif( $iModuleMode & $MODMODE_TEST ){
-			PrintRTL( ExpandMacro( $ParamDef, $EX_STR | $EX_COMMENT | $EX_NOREAD ));
+			PrintRTL( ExpandMacro( $ParamDef, $EX_STR | $EX_COMMENT ));
 		}
 		
 		PrintRTL( ";\n" );
@@ -1069,7 +1068,7 @@ sub GetModuleIO{
 		}else{
 			# module をまだ見つけていない
 			if( /\b(?:test)?(?:module|program)(?:_inc)?\s+(.+)/ ){
-				$_ = ExpandMacro( $1, $EX_CPP | $EX_NOREAD | $EX_NOSIGINFO );
+				$_ = ExpandMacro( $1, $EX_CPP | $EX_NOSIGINFO );
 				$bFound = 1 if( /^$ModuleName\b/ );
 			}
 		}
@@ -1915,7 +1914,7 @@ sub ExecPerl {
 	$PrintBuf = $PrevPrintBuf;
 	
 	$PerlBuf =~ s/^\s*#.*$//gm;
-	$PerlBuf = ExpandMacro( $PerlBuf, $EX_CPP | $EX_STR | $EX_COMMENT | $EX_NOREAD );
+	$PerlBuf = ExpandMacro( $PerlBuf, $EX_CPP | $EX_STR | $EX_COMMENT );
 	
 	if( $Debug >= 3 ){
 		print( "\n=========== perl code =============\n" );
@@ -2103,7 +2102,7 @@ sub IfBlockEval {
 	local( $_ ) = @_;
 	
 	# defined 置換
-	return Evaluate( ExpandMacro( $_, $EX_CPP | $EX_STR | $EX_NOREAD | $EX_IF_EVAL ));
+	return Evaluate( ExpandMacro( $_, $EX_CPP | $EX_STR | $EX_IF_EVAL ));
 }
 
 ### CPP マクロ展開 ###########################################################
@@ -2169,7 +2168,7 @@ sub ExpandMacro {
 					}
 				}elsif( $Name eq '$Eval' && s/^\s*($OpenClose)// ){
 					# $Eval
-					$Line .= Evaluate( ExpandMacro( $1, $EX_CPP | $EX_STR | $EX_NOREAD ));
+					$Line .= Evaluate( ExpandMacro( $1, $EX_CPP | $EX_STR ));
 					$bReplaced = 1;
 					
 				}elsif( !defined( $DefineTbl{ $Name } )){
@@ -2354,7 +2353,7 @@ sub Stringlize {
 sub Include {
 	local( $_ ) = @_;
 	
-	$_ = ExpandMacro( $_, $EX_CPP | $EX_STR | $EX_NOREAD );
+	$_ = ExpandMacro( $_, $EX_CPP | $EX_STR );
 	$_ = $1 if( /"(.*?)"/ || /<(.*?)>/ );
 	
 	push(
