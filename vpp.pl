@@ -2112,7 +2112,7 @@ sub ExpandMacro {
 	( $_, $Mode ) = @_;
 	
 	my $Line;
-	my $Line2;
+	my $tmp;
 	my $Name;
 	my( $ArgList, @ArgList );
 	my $ArgNum;
@@ -2148,14 +2148,22 @@ sub ExpandMacro {
 					
 				}elsif( $Name eq 'sizeof' && s/^\s*($OpenClose)// ){
 					# sizeof
-					$Line .= SizeOf( $1, $Mode );
-					$bReplaced = 1;
-					
+					$tmp = SizeOf( $1, $Mode );
+					if( $tmp ){
+						$Line .= $tmp;
+						$bReplaced = 1;
+					}else{
+						$Line .= "sizeof$1";
+					}
 				}elsif( $Name eq 'typeof' && s/^\s*($OpenClose)// ){
 					# typeof
-					$Line .= TypeOf( $1, $Mode );
-					$bReplaced = 1;
-					
+					$tmp = TypeOf( $1, $Mode );
+					if( $tmp ){
+						$Line .= $tmp;
+						$bReplaced = 1;
+					}else{
+						$Line .= "typeof$1";
+					}
 				}elsif( $Name eq '$Eval' && s/^\s*($OpenClose)// ){
 					# $Eval
 					$Line .= Evaluate( ExpandMacro( $1, $EX_CPP | $EX_STR | $EX_NOREAD ));
@@ -2214,19 +2222,19 @@ sub ExpandMacro {
 									$Line .= $Name . '()';
 								}else{
 									# 仮引数を実引数に置換
-									$Line2 = $DefineTbl{ $Name }{ macro };
-									$Line2 =~ s/<__ARG_(\d+)__>/$ArgList[ $1 ]/g;
+									$tmp = $DefineTbl{ $Name }{ macro };
+									$tmp =~ s/<__ARG_(\d+)__>/$ArgList[ $1 ]/g;
 									
 									# 可変引数を置換
 									if( $DefineTbl{ $Name }{ args } < 0 ){
 										if( $#ArgList + 1 <= $ArgNum ){
 											# 引数 0 個の時は，カンマもろとも消す
-											$Line2 =~ s/,?\s*(?:##)*\s*__VA_ARGS__\s*/ /g;
+											$tmp =~ s/,?\s*(?:##)*\s*__VA_ARGS__\s*/ /g;
 										}else{
-											$Line2 =~ s/(?:##\s*)?__VA_ARGS__/join( ', ', @ArgList[ $ArgNum .. $#ArgList ] )/ge;
+											$tmp =~ s/(?:##\s*)?__VA_ARGS__/join( ', ', @ArgList[ $ArgNum .. $#ArgList ] )/ge;
 										}
 									}
-									$Line .= $Line2;
+									$Line .= $tmp;
 									$bReplaced = 1;
 								}
 							}else{
@@ -2294,6 +2302,8 @@ sub SizeOf {
 	
 	return 'x' if( $Flag & $EX_NOSIGINFO );
 	
+	return undef if( !$CurModuleName );
+	
 	while( s/($CSymbol)// ){
 		if( !defined( $Wire = $WireListHash->{ $CurModuleName }{ $1 } )){
 			Error( "undefined wire '$1'" );
@@ -2312,6 +2322,8 @@ sub TypeOf {
 	( $_, $Flag ) = @_;
 	
 	return '[?]' if( $Flag & $EX_NOSIGINFO );
+	
+	return undef if( !$CurModuleName );
 	
 	if( !/($CSymbol)/ ){
 		Error( "syntax error (typeof)" );
