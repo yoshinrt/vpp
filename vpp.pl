@@ -1464,7 +1464,10 @@ sub RegisterWire{
 			( $Attr & ( $ATTR_FIX | $ATTR_BYDIR )) && !( $Attr & $ATTR_WEAK_W )
 		){
 			# すでに drv が登録されていたら警告
-			if( defined( $Wire->{ drv_width })){
+			if(
+				defined( $Wire->{ drv_width }) &&
+				(( $Attr | $Wire->{ attr }) & $ATTR_FIX )
+			){
 				Warning( "multiple driver info ( wire : $Name )" );
 			}
 			
