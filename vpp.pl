@@ -52,7 +52,8 @@ my $MODMODE_PROGRAM	= $enum <<= 1;
 
 my $CSymbol			= qr/\b[_a-zA-Z]\w*\b/;
 my $CSymbol2		= qr/\b[_a-zA-Z][\w\$]*\b/;
-my $SigTypeDef		= qr/\b(?:parameter|wire|reg|input(?:\s+wire)?|output(?:\s+reg|\s+wire)?|inout)\b/;
+my $SigTypeDef		= qr/\b(?:parameter|supply[01]?|tri[01]?|triand|trior|trireg|wand|wor|wire|reg|input(?:\s+wire)?|output(?:\s+reg|\s+wire)?|inout)\b/;
+my $WireTypeDef		= qr/\b(?:parameter|supply[01]?|tri[01]?|triand|trior|trireg|wand|wor)\b/;
 my $DefSkelPort		= "(.*)";
 my $DefSkelWire		= "\$1";
 
@@ -1127,10 +1128,12 @@ sub DeleteExceptPort{
 	
 	if( /^($SigTypeDef)\s*([\s\S]*)/ ){
 		
-		my( $Type ) = $1 eq 'parameter' ? 'wire' : $1;
+		my( $Type );
 		my( $Width ) = '';
+		( $Type, $_ ) = ( $1, $2 );
 		
-		$_ = $2;
+		# parameter, tri1 等は定義済み wire とみなす
+		$Type = 'wire' if( $Type =~ /$WireTypeDef/ );
 		
 		# バス幅不明の時は [?] というものあり
 		if( /^\[(.+?)\]\s*([\s\S]*)/ ){
