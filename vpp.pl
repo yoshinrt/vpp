@@ -937,6 +937,10 @@ sub DefineInst{
 					# $Wire が (数式を含まない) C symbol か?
 					my $bSimpleWire = ( $Wire =~ /^$CSymbol2$/ );
 					
+					# WireExp から定数を除去
+					$WireExp =~ s/\b\d*'[bodh][\da-fA-F]\b//g;
+					$WireExp =~ s/\b\d\b//g;
+					
 					# 式に含まれた wire 毎の処理
 					while( $WireExp ){
 						$WireExp =~ s/^[^_\w]+//g;
