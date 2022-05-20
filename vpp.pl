@@ -939,8 +939,8 @@ sub DefineInst{
 					my $bSimpleWire = ( $Wire =~ /^$CSymbol2$/ );
 					
 					# WireExp から定数を除去
-					$WireExp =~ s/\b\d*'[bodh][\da-fA-F]\b//g;
-					$WireExp =~ s/\b\d\b//g;
+					$WireExp =~ s/\b\d*'[bodh][\da-fA-F]+\b//g;
+					$WireExp =~ s/\b\d+\b//g;
 					
 					# 式に含まれた wire 毎の処理
 					while( $WireExp ){
