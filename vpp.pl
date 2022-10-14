@@ -340,18 +340,18 @@ sub CppParser {
 			# $DefineTbl{ $1 }{ macro }:  マクロ定義本体
 			
 			if( /^ifdef\b(.*)/ ){
-				CppParser( $BLKMODE_IF, !IfBlockEval( "defined $1" ));
+				CppParser( $BLKMODE_IF, !$BlockNoOutput && !IfBlockEval( "defined $1" ));
 			}elsif( /^ifndef\b(.*)/ ){
-				CppParser( $BLKMODE_IF,  IfBlockEval( "defined $1" ));
+				CppParser( $BLKMODE_IF, !$BlockNoOutput &&  IfBlockEval( "defined $1" ));
 			}elsif( /^if\b(.*)/ ){
-				CppParser( $BLKMODE_IF, !IfBlockEval( $1 ));
+				CppParser( $BLKMODE_IF, !$BlockNoOutput && !IfBlockEval( $1 ));
 			}elsif( /^elif\b(.*)/ ){
 				if( $BlockMode != $BLKMODE_IF ){
 					Error( "unexpected #elif" );
 				}elsif( $bNoOutput ){
 					# まだ出力していない
-					$bNoOutput = !IfBlockEval( $1 );
 					$BlockNoOutput &= ~1;
+					$bNoOutput = !$BlockNoOutput && !IfBlockEval( $1 );
 					$BlockNoOutput |= 1 if( $bNoOutput );
 				}else{
 					# もう出力した
@@ -363,8 +363,8 @@ sub CppParser {
 					Error( "unexpected #else" );
 				}elsif( $bNoOutput ){
 					# まだ出力していない
-					$bNoOutput = 0;
 					$BlockNoOutput &= ~1;
+					$bNoOutput = $BlockNoOutput ? 1 : 0;
 				}else{
 					# もう出力した
 					$BlockNoOutput |= 1;
@@ -2135,11 +2135,14 @@ sub ExpandMacro {
 			$bReplaced = 0;
 			$Line = '';
 			
-			if(
-				$BlockRepeat && $Mode & $EX_REP &&
-				s/%(?:\{(.+?)\})?([+\-\d\.#]*[%cCdiouxXeEfgGnpsSb])/ExpandPrintfFmtSub( $2, $1 )/ge
-			){
-				$bReplaced = 1;
+			if( $BlockRepeat && $Mode & $EX_REP ){
+				if( !$BlockNoOutput && s/%(?:\{(.+?)\})?([+\-\d\.#]*[%cCdiouxXeEfgGnpsSb])/ExpandPrintfFmtSub( $2, $1 )/ge ){
+					$bReplaced = 1;
+				}
+				
+				elsif( $BlockNoOutput && s/%(?:\{(.+?)\})?([+\-\d\.#]*[%cCdiouxXeEfgGnpsSb])/0/g ){
+					$bReplaced = 1;
+				}
 			}
 			
 			while( /(.*?)(\$?$CSymbol)(.*)/s ){
@@ -2173,7 +2176,7 @@ sub ExpandMacro {
 					}else{
 						$Line .= "typeof$1";
 					}
-				}elsif( $Name eq '$Eval' && s/^\s*($OpenClose)// ){
+				}elsif( !$BlockNoOutput && $Name eq '$Eval' && s/^\s*($OpenClose)// ){
 					# $Eval
 					$Line .= Evaluate( ExpandMacro( $1, $EX_CPP | $EX_STR ));
 					$bReplaced = 1;
