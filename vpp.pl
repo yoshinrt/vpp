@@ -1004,7 +1004,8 @@ sub DefineInst{
 						if(
 							$bSimpleWire &&
 							( $BitWidth eq '' || $BitWidth =~ /^\d+:\d+$/ ) &&
-							$BitWidth ne ( $WireListHash->{ $CurModuleName }{ $Wire }{ width } || '' )
+							$BitWidth ne ( $WireListHash->{ $CurModuleName }{ $Wire }{ width } || '' ) &&
+							!( $BitWidth eq '0:0' && ( $WireListHash->{ $CurModuleName }{ $Wire }{ width } || '' ) eq '' )
 						){
 							$Wire = $Wire . ( $BitWidth eq '' ? '[0]' : "[$BitWidth]" );
 						}
