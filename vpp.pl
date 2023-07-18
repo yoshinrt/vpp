@@ -316,7 +316,22 @@ sub CppParser {
 		s/\bEOF\b/#endperl/g;
 		s/(?<!#)\benum\b/#enum/g;
 		
-		if( /^\s*#\s*(?:ifdef|ifndef|if|elif|else|endif|repeat|foreach|endrep|perl|endperl|enum|enum_p|define|define|define|undef|include|require)\b/ ){
+		if( /^\s*#\s*(ifdef|ifndef|if|elif|else|endif|repeat|foreach|endrep|perl|endperl|enum|enum_p|define|define_m|undef|include|require)\b/ ){
+			
+			# define_m 〜 end を連結
+			if( $1 eq 'define_m' ){
+				s/\bdefine_m\b/define/;
+				
+				while( 1 ){
+					if( !( $Line = ReadLine( $fpIn ))){
+						Error( "missing #end for #define_m" );
+						last;
+					}
+					last if( $Line =~ /^\s*#\s*end\b/ );
+					$_ .= $Line;
+				}
+			}
+			
 			
 			# \ で終わっている行を連結
 			while( /\\$/ ){
@@ -407,10 +422,10 @@ sub CppParser {
 				if( /^define\s+($CSymbol)$/ ){
 					# 名前だけ定義
 					AddCppMacro( $1 );
-				}elsif( /^define\s+($CSymbol)\s+(.+)/ ){
+				}elsif( /^define\s+($CSymbol)\s+(.+)/s ){
 					# 名前と値定義
 					AddCppMacro( $1, $2 );
-				}elsif( /^define\s+($CSymbol)($OpenClose)\s*(.*)/ ){
+				}elsif( /^define\s+($CSymbol)($OpenClose)\s*(.*)/s ){
 					# 関数マクロ
 					my( $Name, $ArgList, $Macro ) = ( $1, $2, $3 );
 					
