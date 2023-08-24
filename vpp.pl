@@ -474,6 +474,7 @@ sub CppParser {
 					AddCppMacro( $Name, $Macro, $ArgNum );
 				}elsif( /^undef\s+($CSymbol)$/ ){
 					# undef
+					
 					delete( $DefineTbl{ $1 } );
 				}elsif( /^include\s*(.*)/ ){
 					Include( $1 );
@@ -2216,14 +2217,8 @@ sub ExpandMacro {
 			$bReplaced = 0;
 			$Line = '';
 			
-			if( $BlockRepeat ){
-				if( !$BlockNoOutput && s/%(?:\{(.+?)\})?([+\-\d\.#]*[%cCdiouxXeEfgGnpsSb])/ExpandPrintfFmtSub( $2, $1 )/ge ){
-					$bReplaced = 1;
-				}
-				
-				elsif( $BlockNoOutput && s/%(?:\{(.+?)\})?([+\-\d\.#]*[%cCdiouxXeEfgGnpsSb])/0/g ){
-					$bReplaced = 1;
-				}
+			if( $BlockRepeat && s/%(?:\{(.+?)\})?([+\-\d\.#]*[%cCdiouxXeEfgGnpsSb])/ExpandPrintfFmtSub( $2, $1 )/ge ){
+				$bReplaced = 1;
 			}
 			
 			if($Mode & $EX_CPP){
@@ -2262,7 +2257,11 @@ sub ExpandMacro {
 						}
 					}elsif( !$BlockNoOutput && $Name eq '$Eval' && s/^\s*($OpenClose)// ){
 						# $Eval
-						$Line .= Evaluate( ExpandMacro( $1, $EX_CPP | $EX_STR ));
+						if( $BlockNoOutput ){
+							$Line .= '0';
+						}else{
+							$Line .= Evaluate( ExpandMacro( $1, $EX_CPP | $EX_STR ));
+						}
 						$bReplaced = 1;
 						
 					}elsif( $Name eq '$String' && s/^\s*($OpenClose)// ){
@@ -2396,6 +2395,10 @@ sub ExpandMacro {
 sub ExpandPrintfFmtSub {
 	my( $Fmt, $Name ) = @_;
 	my $Num;
+	
+	if( $BlockNoOutput ){
+		return "0";
+	}
 	
 	if( !defined( $Name )){
 		$Name = '__REP_VAL__';
