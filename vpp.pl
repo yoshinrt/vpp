@@ -2148,6 +2148,7 @@ sub ExpandMacro {
 	
 	my $Line;
 	my $tmp;
+	my $tmp2;
 	my $Name;
 	my( $ArgList, @ArgList );
 	my $ArgNum;
@@ -2187,21 +2188,23 @@ sub ExpandMacro {
 					
 				}elsif( $Name eq 'sizeof' && s/^\s*($OpenClose)// ){
 					# sizeof
-					$tmp = SizeOf( $1, $Mode );
+					$tmp2 = ExpandMacro( $1, $EX_CPP | $EX_STR );
+					$tmp = SizeOf( $tmp2, $Mode );
 					if( $tmp ){
 						$Line .= $tmp;
 						$bReplaced = 1;
 					}else{
-						$Line .= "sizeof$1";
+						$Line .= "sizeof$tmp2";
 					}
 				}elsif( $Name eq 'typeof' && s/^\s*($OpenClose)// ){
 					# typeof
-					$tmp = TypeOf( $1, $Mode );
+					$tmp2 = ExpandMacro( $1, $EX_CPP | $EX_STR );
+					$tmp = TypeOf( $tmp2, $Mode );
 					if( $tmp ){
 						$Line .= $tmp;
 						$bReplaced = 1;
 					}else{
-						$Line .= "typeof$1";
+						$Line .= "typeof$tmp2";
 					}
 				}elsif( !$BlockNoOutput && $Name eq '$Eval' && s/^\s*($OpenClose)// ){
 					# $Eval
