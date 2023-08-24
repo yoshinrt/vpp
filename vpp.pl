@@ -34,7 +34,6 @@ my $BLKMODE_IF		= $enum++;	# if ブロック
 
 $enum = 1;
 my $EX_CPP			= $enum;		# CPP マクロ展開
-my $EX_REP			= $enum <<= 1;	# repeat マクロ展開
 my $EX_STR			= $enum <<= 1;	# 文字列リテラル
 my $EX_RMSTR		= $enum <<= 1;	# 文字列リテラル削除
 my $EX_COMMENT		= $enum <<= 1;	# コメント
@@ -376,7 +375,7 @@ sub CppParser {
 			s/^\s*#\s*//;
 			
 			$LineRaw = $_;
-			$_ = ExpandMacro( $_, $EX_REP | $EX_RMCOMMENT );
+			$_ = ExpandMacro( $_, $EX_RMCOMMENT );
 			
 			# $DefineTbl{ $1 }{ args }:  >=0: 引数  <0: 可変引数  's': 単純マクロ
 			# $DefineTbl{ $1 }{ macro }:  マクロ定義本体
@@ -485,7 +484,7 @@ sub CppParser {
 				}
 			}
 		}elsif( !$BlockNoOutput ){
-			PrintRTL( ExpandMacro( $_, $EX_CPP | $EX_REP ));
+			PrintRTL( ExpandMacro( $_, $EX_CPP ));
 		}
 	}
 	
@@ -2209,15 +2208,15 @@ sub ExpandMacro {
 	my $i;
 	my $Indent;
 	
-	$Mode = $EX_CPP | $EX_REP if( !defined( $Mode ));
+	$Mode = $EX_CPP if( !defined( $Mode ));
 	
 	my $bReplaced = 1;
-	if( $Mode & $EX_CPP || ( $BlockRepeat && $Mode & $EX_REP )){
+	if( $Mode & $EX_CPP ){
 		while( $bReplaced ){
 			$bReplaced = 0;
 			$Line = '';
 			
-			if( $BlockRepeat && $Mode & $EX_REP ){
+			if( $BlockRepeat ){
 				if( !$BlockNoOutput && s/%(?:\{(.+?)\})?([+\-\d\.#]*[%cCdiouxXeEfgGnpsSb])/ExpandPrintfFmtSub( $2, $1 )/ge ){
 					$bReplaced = 1;
 				}
