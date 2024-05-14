@@ -877,10 +877,8 @@ sub DefineInst{
 		$BitWidth,
 		$BitWidthWire,
 		
-		$bFirst,
-		
 		$tmp,
-		$tmp2
+		$buf
 	);
 	
 	@SkelList = ();
@@ -921,7 +919,6 @@ sub DefineInst{
 	# instance の header を出力
 	
 	PrintRTL( "\t$ModuleName$ModuleParam $ModuleInst" );
-	$bFirst = 1;
 	
 	# get sub module's port list
 	
@@ -1029,16 +1026,13 @@ sub DefineInst{
 				
 				# .hoge( hoge ), の list を出力
 				
-				PrintRTL( $bFirst ? "(\n" : ",\n" );
-				$bFirst = 0;
-				
 				$tmp = TabSpace( '', $tab0 );
 				$Wire =~ s/\$n//g;		#z $n の削除
 				$tmp = TabSpace( "$tmp.$Port", $tab1 );
 				$tmp = TabSpace( "$tmp( $Wire", $tab2 );
-				$tmp .= ")";
+				$tmp .= "),\t// " . ( $InOut eq 'input' ? 'I' : $InOut eq 'output' ? 'O' : 'IO' ) . "\n";
 				
-				PrintRTL( "$tmp" );
+				$buf .= $tmp;
 			}
 		}
 		
@@ -1049,7 +1043,10 @@ sub DefineInst{
 	
 	# instance の footer を出力
 	
-	PrintRTL( "\n\t)" ) if( !$bFirst );
+	if( $buf ){
+		$buf =~ s/(.*)\),/$1)/s;
+		PrintRTL( "(\n$buf\t)" )
+	}
 	PrintRTL( ";\n" );
 }
 
