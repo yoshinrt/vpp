@@ -92,6 +92,7 @@ my $VppStage		= $VPPSTAGE_CPP;
 my $bPrevLineBlank	= 1;
 my $CppOnly			= 0;
 my $Deflize			= 0;
+my $NoWarnAddPort	= 0;
 my @IncludeList;
 
 # 定義テーブル関係
@@ -115,20 +116,19 @@ exit( $ErrorCnt != 0 );
 sub main{
 	local( $_ );
 	
-	if( $#ARGV < 0 ){
-		print( "usage: vpp.pl [-vrE] [-I<path>] [-D<def>[=<val>]] [-tab<width>] <Def file>\n" );
-		return;
-	}
-	
 	# -DMACRO setup
 	
-	while( 1 ){
+	while($#ARGV >= 0){
 		$_ = $ARGV[ 0 ];
 		
 		if    ( /^-I(.*)/		){ push( @INC, $1 );
 		}elsif( /^-D(.+?)=(.+)/	){ AddCppMacro( $1, $2 );
 		}elsif( /^-D(.+)/		){ AddCppMacro( $1 );
 		}elsif( /^-tab(.*)/		){ $ExpandTab = 1; $TabWidth = eval( $1 );
+		}elsif( /^--no-warn-add-port$/){
+			$NoWarnAddPort	= 1;
+		}elsif( /^--/ ){
+			print("unknown option: $_\n");
 		}elsif( /^-/			){
 			while( s/v// ){ ++$Debug; }
 			$CppOnly = 1 if( /E/ );
@@ -136,6 +136,11 @@ sub main{
 		}else					 { last;
 		}
 		shift( @ARGV );
+	}
+	
+	if( $#ARGV < 0 ){
+		print( "usage: vpp.pl [-vrE] [-I<path>] [-D<def>[=<val>]] [-tab<width>] <Def file>\n" );
+		return;
 	}
 	
 	if( $Deflize ){
@@ -1588,7 +1593,7 @@ sub OutputWireList{
 		if( !( $Attr & $ATTR_DEF ) && ( $Type =~ /[IOB]/ )){
 			++$WireCntAdded;
 			Warning( "'$CurModuleName.$Wire->{ name }' is undefined, generated automatically" )
-				if( !( $iModuleMode & $MODMODE_TEST ));
+				if( !( $iModuleMode & $MODMODE_TEST ) && !$NoWarnAddPort);
 		}
 		
 		if( $Debug >= 2 ){
