@@ -1420,6 +1420,7 @@ sub ReplaceGroup {
 	
 	/([lu]?)(\d)/;
 	$_ = $grp->[ $2 - 1 ];
+	$_ = '' if(!defined($_));
 	
 	return	$1 eq 'l' ? lc( $_ ) :
 			$1 eq 'u' ? uc( $_ ) : $_;
