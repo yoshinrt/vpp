@@ -52,7 +52,7 @@ my $MODMODE_PROGRAM	= $enum <<= 1;
 
 my $CSymbol			= qr/\b[_a-zA-Z]\w*\b/;
 my $CSymbol2		= qr/\b[_a-zA-Z][\w\$]*\b/;
-my $SigTypeDef		= qr/\b(?:parameter|supply[01]?|tri[01]?|triand|trior|trireg|wand|wor|wire|reg|input(?:\s+wire)?|output(?:\s+reg|\s+wire)?|inout)\b/;
+my $SigTypeDef		= qr/\b(?:parameter|supply[01]?|tri[01]?|triand|trior|trireg|wand|wor|wire|reg|input(?:\s+wire)?|(?:output|inout)(?:\s+reg|\s+wire)?)\b/;
 my $WireTypeDef		= qr/\b(?:parameter|supply[01]?|tri[01]?|triand|trior|trireg|wand|wor)\b/;
 my $DefSkelPort		= "(.*)";
 my $DefSkelWire		= "\$1";
@@ -1120,7 +1120,7 @@ sub GetModuleIO{
 	# split
 	#print if( $Debug );
 	s/\boutreg\b/output reg/g;
-	s/\b((?:in|out)put)\s+wire\b/$1/g;
+	s/\b((?:in|out)put|inout)\s+wire\b/$1/g;
 	s/($SigTypeDef)/\n$1/g;
 	s/ *[;\)].*//g;
 	
