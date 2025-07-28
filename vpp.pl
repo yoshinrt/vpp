@@ -2176,121 +2176,123 @@ sub ExpandMacro {
 				}
 			}
 			
-			while( /(.*?)(\$?$CSymbol)(.*)/s ){
-				$Line .= $1;
-				( $Indent, $Name, $_ ) = ( $1, $2, $3 );
-				
-				if( $Name eq '__FILE__' ){		$Line .= $DefFile;
-				}elsif( $Name eq '__LINE__' ){	$Line .= $.;
-				}elsif(
-					$Name eq 'defined' && ( $Mode & $EX_IF_EVAL ) &&
-					( s/^\s*($CSymbol)// || s/^s*\(\s*($CSymbol)\s*\)// )
-				){
-					# defined マクロ
-					$Line .= defined( $DefineTbl{ $1 } ) ? '1' : '0';
+			if($Mode & $EX_CPP){
+				while( /(.*?)(\$?$CSymbol)(.*)/s ){
+					$Line .= $1;
+					( $Indent, $Name, $_ ) = ( $1, $2, $3 );
 					
-				}elsif( $Name eq 'sizeof' && s/^\s*($OpenClose)// ){
-					# sizeof
-					$tmp2 = ExpandMacro( $1, $EX_CPP | $EX_STR );
-					$tmp = SizeOf( $tmp2, $Mode );
-					if( $tmp ){
-						$Line .= $tmp;
-						$bReplaced = 1;
-					}else{
-						$Line .= "sizeof$tmp2";
-					}
-				}elsif( $Name eq 'typeof' && s/^\s*($OpenClose)// ){
-					# typeof
-					$tmp2 = ExpandMacro( $1, $EX_CPP | $EX_STR );
-					$tmp = TypeOf( $tmp2, $Mode );
-					if( $tmp ){
-						$Line .= $tmp;
-						$bReplaced = 1;
-					}else{
-						$Line .= "typeof$tmp2";
-					}
-				}elsif( !$BlockNoOutput && $Name eq '$Eval' && s/^\s*($OpenClose)// ){
-					# $Eval
-					$Line .= Evaluate( ExpandMacro( $1, $EX_CPP | $EX_STR ));
-					$bReplaced = 1;
-					
-				}elsif( !defined( $DefineTbl{ $Name } )){
-					# マクロではない
-					# if 用の eval の場合，，未定義シンボルは 0 に変換
-					$Line .= ( $Mode & $EX_IF_EVAL ) ? '0' : $Name;
-				}else{
-					# インデント量を求める
-					$Indent =~ s/.*[\x0D\x0A]//s;
-					$Indent =~ s/\S.*//;
-					
-					if( $DefineTbl{ $Name }{ args } eq 's' ){
-						# 単純マクロ
-						$Line .= ExpandMacroIndent( $Name, $Indent );
-						$bReplaced = 1;
-					}else{
-						# 関数マクロ
-						s/^\s+//;
+					if( $Name eq '__FILE__' ){		$Line .= $DefFile;
+					}elsif( $Name eq '__LINE__' ){	$Line .= $.;
+					}elsif(
+						$Name eq 'defined' && ( $Mode & $EX_IF_EVAL ) &&
+						( s/^\s*($CSymbol)// || s/^s*\(\s*($CSymbol)\s*\)// )
+					){
+						# defined マクロ
+						$Line .= defined( $DefineTbl{ $1 } ) ? '1' : '0';
 						
-						if( !/^\(/ ){
-							# hoge( になってない
-							Error( "invalid number of macro arg: $Name" );
-							$Line .= $Name;
+					}elsif( $Name eq 'sizeof' && s/^\s*($OpenClose)// ){
+						# sizeof
+						$tmp2 = ExpandMacro( $1, $EX_CPP | $EX_STR );
+						$tmp = SizeOf( $tmp2, $Mode );
+						if( $tmp ){
+							$Line .= $tmp;
+							$bReplaced = 1;
 						}else{
-							# マクロ引数取得
-							$_ = GetFuncArg( $fpIn, $_ );
+							$Line .= "sizeof$tmp2";
+						}
+					}elsif( $Name eq 'typeof' && s/^\s*($OpenClose)// ){
+						# typeof
+						$tmp2 = ExpandMacro( $1, $EX_CPP | $EX_STR );
+						$tmp = TypeOf( $tmp2, $Mode );
+						if( $tmp ){
+							$Line .= $tmp;
+							$bReplaced = 1;
+						}else{
+							$Line .= "typeof$tmp2";
+						}
+					}elsif( !$BlockNoOutput && $Name eq '$Eval' && s/^\s*($OpenClose)// ){
+						# $Eval
+						$Line .= Evaluate( ExpandMacro( $1, $EX_CPP | $EX_STR ));
+						$bReplaced = 1;
+						
+					}elsif( !defined( $DefineTbl{ $Name } )){
+						# マクロではない
+						# if 用の eval の場合，，未定義シンボルは 0 に変換
+						$Line .= ( $Mode & $EX_IF_EVAL ) ? '0' : $Name;
+					}else{
+						# インデント量を求める
+						$Indent =~ s/.*[\x0D\x0A]//s;
+						$Indent =~ s/\S.*//;
+						
+						if( $DefineTbl{ $Name }{ args } eq 's' ){
+							# 単純マクロ
+							$Line .= ExpandMacroIndent( $Name, $Indent );
+							$bReplaced = 1;
+						}else{
+							# 関数マクロ
+							s/^\s+//;
 							
-							# マクロ引数解析
-							if( /^($OpenClose)(.*)/s ){
-								( $ArgList, $_ ) = ( $1, $2 );
-								$ArgList =~ s/<__COMMENT_\d+__>//g;
-								$ArgList =~ s/[\t ]*[\x0D\x0A]+[\t ]*/ /g;
-								$ArgList =~ s/^\(\s*//;
-								$ArgList =~ s/\s*\)$//;
+							if( !/^\(/ ){
+								# hoge( になってない
+								Error( "invalid number of macro arg: $Name" );
+								$Line .= $Name;
+							}else{
+								# マクロ引数取得
+								$_ = GetFuncArg( $fpIn, $_ );
 								
-								undef( @ArgList );
-								
-								while( $ArgList ne '' ){
-									last if( $ArgList !~ /^\s*($OpenCloseArg)\s*(,?)\s*(.*)/ );
-									push( @ArgList, $1 );
-									$ArgList = $3;
+								# マクロ引数解析
+								if( /^($OpenClose)(.*)/s ){
+									( $ArgList, $_ ) = ( $1, $2 );
+									$ArgList =~ s/<__COMMENT_\d+__>//g;
+									$ArgList =~ s/[\t ]*[\x0D\x0A]+[\t ]*/ /g;
+									$ArgList =~ s/^\(\s*//;
+									$ArgList =~ s/\s*\)$//;
 									
-									if( $2 ne '' && $ArgList eq '' ){
-										push( @ArgList, '' );
-									}
-								}
-								
-								if( $ArgList eq '' ){
-									# 引数チェック
-									$ArgNum = $DefineTbl{ $Name }{ args };
-									$ArgNum = -$ArgNum - 1 if( $ArgNum < 0 );
+									undef( @ArgList );
 									
-									if( !(
-										$DefineTbl{ $Name }{ args } >= 0 ?
-											( $ArgNum == $#ArgList + 1 ) : ( $ArgNum <= $#ArgList + 1 )
-									)){
-										Error( "invalid number of macro arg: $Name" );
-										$Line .= $Name . '()';
-									}else{
-										# 仮引数を実引数に置換
-										$tmp = ExpandMacroIndent( $Name, $Indent );
-										$tmp =~ s/<__ARG_(\d+)__>/$ArgList[ $1 ]/g;
+									while( $ArgList ne '' ){
+										last if( $ArgList !~ /^\s*($OpenCloseArg)\s*(,?)\s*(.*)/ );
+										push( @ArgList, $1 );
+										$ArgList = $3;
 										
-										# 可変引数を置換
-										if( $DefineTbl{ $Name }{ args } < 0 ){
-											if( $#ArgList + 1 <= $ArgNum ){
-												# 引数 0 個の時は，カンマもろとも消す
-												$tmp =~ s/,?\s*(?:##)*\s*__VA_ARGS__\s*/ /g;
-											}else{
-												$tmp =~ s/(?:##\s*)?__VA_ARGS__/join( ', ', @ArgList[ $ArgNum .. $#ArgList ] )/ge;
-											}
+										if( $2 ne '' && $ArgList eq '' ){
+											push( @ArgList, '' );
 										}
-										$Line .= $tmp;
-										$bReplaced = 1;
 									}
-								}else{
-									# $ArgList を全部消費しきれなかったらエラー
-									Error( "invalid macro arg: $Name" );
-									$Line .= $Name . '()';
+									
+									if( $ArgList eq '' ){
+										# 引数チェック
+										$ArgNum = $DefineTbl{ $Name }{ args };
+										$ArgNum = -$ArgNum - 1 if( $ArgNum < 0 );
+										
+										if( !(
+											$DefineTbl{ $Name }{ args } >= 0 ?
+												( $ArgNum == $#ArgList + 1 ) : ( $ArgNum <= $#ArgList + 1 )
+										)){
+											Error( "invalid number of macro arg: $Name" );
+											$Line .= $Name . '()';
+										}else{
+											# 仮引数を実引数に置換
+											$tmp = ExpandMacroIndent( $Name, $Indent );
+											$tmp =~ s/<__ARG_(\d+)__>/$ArgList[ $1 ]/g;
+											
+											# 可変引数を置換
+											if( $DefineTbl{ $Name }{ args } < 0 ){
+												if( $#ArgList + 1 <= $ArgNum ){
+													# 引数 0 個の時は，カンマもろとも消す
+													$tmp =~ s/,?\s*(?:##)*\s*__VA_ARGS__\s*/ /g;
+												}else{
+													$tmp =~ s/(?:##\s*)?__VA_ARGS__/join( ', ', @ArgList[ $ArgNum .. $#ArgList ] )/ge;
+												}
+											}
+											$Line .= $tmp;
+											$bReplaced = 1;
+										}
+									}else{
+										# $ArgList を全部消費しきれなかったらエラー
+										Error( "invalid macro arg: $Name" );
+										$Line .= $Name . '()';
+									}
 								}
 							}
 						}
