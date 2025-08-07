@@ -223,8 +223,9 @@ sub ReadLine {
 	my( $Cnt );
 	my( $Line );
 	my( $LineCnt ) = $.;
+	my $bBreak = 0;
 	
-	while( m@(//|/\*|(?<!\\)")@ ){
+	while(!$bBreak && m@(//|/\*|(?<!\\)"|\$Eval\b)@){
 		$Cnt = $#CommentPool + 1;
 		
 		if( $1 eq '//' ){
@@ -236,20 +237,39 @@ sub ReadLine {
 				Error( 'unterminated "' );
 				s/"//;
 			}
-		}elsif( s#(/\*.*?\*/)#<__COMMENT_${Cnt}__>#s ){
-			# /* ... */ の組が発見されたら，置換
-			push( @CommentPool, $1 ) if( $VppStage == $VPPSTAGE_CPP );
+		}elsif($1 eq '$Eval'){
+			# $Eval
+			while(!s/\$Eval\s*($OpenClose)/__EVAL_EXPRESSION__$1/){
+				if( !( $Line = ReadLineSub( $_[ 0 ] ))){
+					Error( 'unterminated $Eval(...)', $LineCnt );
+					$bBreak = 1;
+					last;
+				}
+				$_ .= $Line;
+			}
 			$ResetLinePos = $.;
 		}else{
-			# /* ... */ の組が発見されないので，発見されるまで行 cat
-			if( !( $Line = ReadLineSub( $_[ 0 ] ))){
-				Error( 'unterminated */', $LineCnt );
-				last;
+			# /* ...
+			while(1){
+				if(s#(/\*.*?\*/)#<__COMMENT_${Cnt}__>#s){
+					# /* ... */ の組が発見されたら，置換
+					push( @CommentPool, $1 ) if( $VppStage == $VPPSTAGE_CPP );
+					$ResetLinePos = $.;
+					last;
+				}else{
+					# /* ... */ の組が発見されないので，発見されるまで行 cat
+					if( !( $Line = ReadLineSub( $_[ 0 ] ))){
+						Error( 'unterminated */', $LineCnt );
+						$bBreak = 1;
+						last;
+					}
+					$_ .= $Line;
+				}
 			}
-			$_ .= $Line;
 		}
 	}
 	
+	s/__EVAL_EXPRESSION__/\$Eval/g;
 	$_;
 }
 
