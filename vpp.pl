@@ -447,10 +447,10 @@ sub CppParser {
 				if( /^define\s+($CSymbol)$/ ){
 					# 名前だけ定義
 					AddCppMacro( $1 );
-				}elsif( /^define\s+($CSymbol)\s+(.+)/s ){
+				}elsif( /^define\s+($CSymbol)\s+(.+?)\s*$/s ){
 					# 名前と値定義
 					AddCppMacro( $1, $2 );
-				}elsif( /^define\s+($CSymbol)($OpenClose)\s*(.*)/s ){
+				}elsif( /^define\s+($CSymbol)($OpenClose)\s*(.*?)\s*$/s ){
 					# 関数マクロ
 					my( $Name, $ArgList, $Macro ) = ( $1, $2, $3 );
 					
