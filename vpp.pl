@@ -2235,6 +2235,23 @@ sub ExpandMacro {
 						$Line .= Evaluate( ExpandMacro( $1, $EX_CPP | $EX_STR ));
 						$bReplaced = 1;
 						
+					}elsif( $Name eq '$String' && s/^\s*($OpenClose)// ){
+						# $String(...)
+						
+						$tmp = $1;
+						$tmp =~ s/^\(\s*//;
+						$tmp =~ s/\s*\)$//;
+						$tmp = ExpandMacro($tmp, $Mode);
+						push(@CommentPool, "\"$tmp\"");
+						
+						$Line .= "<__STRING_@{[$#CommentPool]}__>";
+					}elsif(
+						$Name =~ /^__STRING_\d+__$/ ||
+						$Name =~ /^__COMMENT_\d+__$/ ||
+						$Name =~ /^(eq|ne|gt|ge|lt|le)$/
+					){
+						# 置換せずそのままスルー
+						$Line .= $Name;
 					}elsif( !defined( $DefineTbl{ $Name } )){
 						# マクロではない
 						# if 用の eval の場合，，未定義シンボルは 0 に変換
@@ -2329,9 +2346,6 @@ sub ExpandMacro {
 	if( $Mode & $EX_RMSTR ){
 		s/<__STRING_\d+__>/ /g;
 	}elsif( $Mode & $EX_STR ){
-		# 文字列化
-		s/\$String($OpenClose)/Stringlize( $1 )/ge;
-		
 		# 文字列定数復活
 		s/<__STRING_(\d+)__>/$CommentPool[ $1 ]/g;
 		
@@ -2408,15 +2422,6 @@ sub TypeOf {
 		$_ = $_->{ width } eq '' ? '' : "[$_->{ width }]";
 	}
 	$_;
-}
-
-sub Stringlize {
-	local( $_ ) = @_;
-	
-	s/^\(\s*//;
-	s/\s*\)$//;
-	
-	return "\"$_\"";
 }
 
 ### ファイル include #########################################################
