@@ -2655,8 +2655,7 @@ sub DeflizeAlways {
 __DATA__
 #define BUSTYPE( w )	[$Eval( w - 1 ):0]
 #define WIDTH( w )		$Eval(( w ) >= 2 ? int( log(( w ) * 2 - 1 ) / log( 2 )) : 1 )
-#define X( w )			{ w { 1'bx }}
-#define H( w )			{ w { 1'b1 }}
 #define HEX_V( w, v )	$Eval( sprintf(( w ) . "'h%0" . int((( w ) + 3 ) / 4 ) . "x", v ))
 #define BIN_V( w, v )	$Eval( sprintf(( w ) . "'b%0" . ( w ) . "b", v ))
+#define DEC_V( w, v )	$Eval( sprintf(( w ) . "'d%d", v ))
 #define NULL			$Eval( '' )
