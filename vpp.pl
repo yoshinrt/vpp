@@ -52,7 +52,7 @@ my $MODMODE_PROGRAM	= $enum <<= 1;
 
 my $CSymbol			= qr/\b[_a-zA-Z]\w*\b/;
 my $CSymbol2		= qr/\b[_a-zA-Z][\w\$]*\b/;
-my $SigTypeDef		= qr/\b(?:parameter|supply[01]?|tri[01]?|triand|trior|trireg|wand|wor|wire|reg|input(?:\s+wire)?|(?:output|inout)(?:\s+reg|\s+wire)?)\b/;
+my $SigTypeDef		= qr/\b(?:parameter|supply[01]?|tri[01]?|triand|trior|trireg|wand|wor|wire|reg|logic|(?:input|output|inout)(?:\s+(?:reg|wire|logic))?)\b/;
 my $WireTypeDef		= qr/\b(?:parameter|supply[01]?|tri[01]?|triand|trior|trireg|wand|wor)\b/;
 my $DefSkelPort		= "(.*)";
 my $DefSkelWire		= "\$1";
@@ -94,6 +94,7 @@ my $CppOnly			= 0;
 my $Deflize			= 0;
 my $NoWarnAddPort	= 0;
 my @IncludeList;
+my $SVMode			= 0;
 
 # 定義テーブル関係
 my $WireList;
@@ -154,13 +155,14 @@ sub main{
 	# set up default file name
 	
 	$DefFile  = $ARGV[ 0 ];
-	
 	$DefFile =~ /(.*?)(\.def)?(\.[^\.]+)$/;
 	
 	$RTLFile  = "$1$3";
 	$RTLFile  = "$1_top$3" if( $RTLFile eq $DefFile );
 	$ListFile = "$1.list";
 	$CppFile  = "$1.cpp$3.$$";
+	
+	$SVMode = 1 if($DefFile =~ /\.sv$/);
 	
 	# デフォルトマクロリード
 	$fpIn		= DATA;
@@ -670,12 +672,16 @@ sub StartModule{
 				
 				if( $iModuleMode & $MODMODE_NORMAL ){
 					next if( $Type eq "input" || $Type eq "output" || $Type eq "inout" );
-				}elsif( $iModuleMode & $MODMODE_TEST ){
-					$Type = "reg"  if( $Type eq "input" );
-					$Type = "wire" if( $Type eq "output" || $Type eq "inout" );
-				}elsif( $iModuleMode & $MODMODE_INC ){
-					# 非テストモジュールの include モードでは，とりあえず全て wire にする
-					$Type = 'wire';
+				}elsif($SVMode){
+					$Type = "logic";
+				}else{
+					if( $iModuleMode & $MODMODE_TEST ){
+						$Type = "reg"  if( $Type eq "input" );
+						$Type = "wire" if( $Type eq "output" || $Type eq "inout" );
+					}elsif( $iModuleMode & $MODMODE_INC ){
+						# 非テストモジュールの include モードでは，とりあえず全て wire にする
+						$Type = 'wire';
+					}
 				}
 				
 				PrintRTL( FormatSigDef( $Type, $Wire->{ width }, $Wire->{ name }, ';' ));
@@ -705,6 +711,7 @@ sub RegisterModuleIO {
 			$Attr = $InOut eq "input"	? $ATTR_DEF | $ATTR_IN		:
 					$InOut eq "output"	? $ATTR_DEF | $ATTR_OUT		:
 					$InOut eq "inout"	? $ATTR_DEF | $ATTR_INOUT	:
+					$InOut eq "logic"	? $ATTR_DEF | $ATTR_WIRE	:
 					$InOut eq "wire"	? $ATTR_DEF | $ATTR_WIRE	:
 					$InOut eq "reg"		? $ATTR_DEF | $ATTR_WIRE | $ATTR_REF	:
 					$InOut eq "assign"	? $ATTR_FIX | $ATTR_WEAK_W	: 0;
@@ -1140,7 +1147,7 @@ sub GetModuleIO{
 	# split
 	#print if( $Debug );
 	s/\boutreg\b/output reg/g;
-	s/\b((?:in|out)put|inout)\s+wire\b/$1/g;
+	s/\b((?:in|out)put|inout)\s+(wire|logic)\b/$1/g;
 	s/($SigTypeDef)/\n$1/g;
 	s/ *[;\)].*//g;
 	
@@ -2543,7 +2550,7 @@ sub DeflizeModule {
 		# IO とそれ以外に分離
 		s/<__PORT_DECL__>(.*(?:input|output|inout)\b.*?\n)/<__PORT_DECL__>/s;
 		my $IoDecl = $1;
-		$IoDecl =~ s/^\s*(?:reg|wire)\b.*\n//gm;
+		$IoDecl =~ s/^\s*(?:reg|wire|logic)\b.*\n//gm;
 		$IoDecl =~ s/;/,/g;
 		$IoDecl =~ s/(.*),/$1/s;
 		$IoDecl =~ s/^\s*(<__COMMENT_)/\t$1/gm;
