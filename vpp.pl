@@ -34,9 +34,10 @@ my $BLKMODE_IF		= $enum++;	# if ブロック
 
 $enum = 1;
 my $EX_CPP			= $enum;		# CPP マクロ展開
-my $EX_STR			= $enum <<= 1;	# 文字列リテラル
+my $EX_INTFUNC		= $enum <<= 1;	# $Eval, sizeof, typeof 展開
+my $EX_STR			= $enum <<= 1;	# 文字列リテラル復元
 my $EX_RMSTR		= $enum <<= 1;	# 文字列リテラル削除
-my $EX_COMMENT		= $enum <<= 1;	# コメント
+my $EX_COMMENT		= $enum <<= 1;	# コメント復元
 my $EX_RMCOMMENT	= $enum <<= 1;	# コメント削除
 my $EX_NOSIGINFO	= $enum <<= 1;	# $WireListHash 参照不可
 my $EX_IF_EVAL		= $enum <<= 1;	# ifdef 用，defined 展開，存在しないシンボルは 0 に変換
@@ -2157,7 +2158,7 @@ sub ExpandMacro {
 	$Mode = $EX_CPP if( !defined( $Mode ));
 	
 	my $bReplaced = 1;
-	if( $Mode & $EX_CPP ){
+	if( $Mode & ( $EX_CPP | $EX_INTFUNC )){
 		while( $bReplaced ){
 			$bReplaced = 0;
 			$Line = '';
@@ -2170,7 +2171,49 @@ sub ExpandMacro {
 				$Line .= $1;
 				( $Indent, $Name, $_ ) = ( $1, $2, $3 );
 				
-				if( $Name eq '__FILE__' ){		$Line .= $DefFile;
+				# 内蔵 func
+				
+				if(
+					( $Mode & $EX_INTFUNC ) && (
+						$Name eq '$Eval' ||
+						$Name eq 'sizeof' ||
+						$Name eq 'typeof'
+					) && s/^\s*($OpenClose)//
+				){
+					$tmp2 = ExpandMacro( $1, $EX_CPP | $EX_STR );
+					
+					if( $Name eq 'sizeof' ){
+						# sizeof
+						$tmp = SizeOf( $tmp2, $Mode );
+						if( $tmp ){
+							$Line .= $tmp;
+							$bReplaced = 1;
+						}else{
+							$Line .= "sizeof$tmp2";
+						}
+					}elsif( $Name eq 'typeof' ){
+						# typeof
+						$tmp = TypeOf( $tmp2, $Mode );
+						if( $tmp ){
+							$Line .= $tmp;
+							$bReplaced = 1;
+						}else{
+							$Line .= "typeof$tmp2";
+						}
+					}elsif( $Name eq '$Eval' ){
+						# $Eval
+						if( BlockNoOutput ){
+							$Line .= '0';
+						}else{
+							$Line .= Evaluate( $tmp2 );
+						}
+						$bReplaced = 1;
+					}
+				}
+				
+				# CPP
+				
+				elsif( $Name eq '__FILE__' ){		$Line .= $DefFile;
 				}elsif( $Name eq '__LINE__' ){	$Line .= $.;
 				}elsif(
 					$Name eq 'defined' && ( $Mode & $EX_IF_EVAL ) &&
@@ -2178,35 +2221,6 @@ sub ExpandMacro {
 				){
 					# defined マクロ
 					$Line .= defined( $DefineTbl{ $1 } ) ? '1' : '0';
-					
-				}elsif( $Name eq 'sizeof' && s/^\s*($OpenClose)// ){
-					# sizeof
-					$tmp2 = ExpandMacro( $1, $EX_CPP | $EX_STR );
-					$tmp = SizeOf( $tmp2, $Mode );
-					if( $tmp ){
-						$Line .= $tmp;
-						$bReplaced = 1;
-					}else{
-						$Line .= "sizeof$tmp2";
-					}
-				}elsif( $Name eq 'typeof' && s/^\s*($OpenClose)// ){
-					# typeof
-					$tmp2 = ExpandMacro( $1, $EX_CPP | $EX_STR );
-					$tmp = TypeOf( $tmp2, $Mode );
-					if( $tmp ){
-						$Line .= $tmp;
-						$bReplaced = 1;
-					}else{
-						$Line .= "typeof$tmp2";
-					}
-				}elsif( !$BlockNoOutput && $Name eq '$Eval' && s/^\s*($OpenClose)// ){
-					# $Eval
-					if( BlockNoOutput ){
-						$Line .= '0';
-					}else{
-						$Line .= Evaluate( ExpandMacro( $1, $EX_CPP | $EX_STR ));
-					}
-					$bReplaced = 1;
 					
 				}elsif( !defined( $DefineTbl{ $Name } )){
 					# マクロではない
