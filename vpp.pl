@@ -940,7 +940,6 @@ sub DefineInst{
 	
 	my $ModuleFileDisp = $ModuleFile;
 	if( $ModuleFile eq "*" ){
-		$ModuleFile		= $CppFile;
 		$ModuleFileDisp	= $ARGV[ 0 ];
 	}
 	
@@ -1094,6 +1093,10 @@ sub GetModuleIO{
 		return $ModuleIOTbl{ "$ModuleName\t$ModuleFile" };
 	}
 	
+	elsif($ModuleFile eq '*'){
+		return GetModuleIO_SelfFile($ModuleName);
+	}
+	
 	$ModuleFileDisp = $ModuleFile if( !defined( $ModuleFileDisp ));
 	
 	$bFound = 0;
@@ -1210,6 +1213,25 @@ sub DeleteExceptPort{
 	}
 	
 	return( $_ );
+}
+
+sub GetModuleIO_SelfFile {
+	local $_;
+	my($ModuleName) = @_;
+	
+	if(!exists($WireList->{$ModuleName})){
+		Error( "can't find module (or defined later than here) \"$ModuleName\"" );
+		return;
+	}
+	
+	$_ = [];
+	
+	foreach my $Wire (@{$WireList->{$ModuleName}}){
+		push(@$_, QueryWireType($Wire) . "\t" . $Wire->{ width } . "\t" . $Wire->{ name });
+	}
+	$ModuleIOTbl{"$ModuleName\t*"} = $_;
+	
+	return $_;
 }
 
 ### get word #################################################################
@@ -1573,6 +1595,8 @@ sub QueryWireType{
 	
 	my( $Wire, $Mode ) = @_;
 	my( $Attr ) = $Wire->{ attr };
+	
+	$Mode = '' if(!defined($Mode));
 	
 	return( ''		 ) if( $Attr & $ATTR_DEF  && $Mode eq 'd' );
 	return( 'input'	 ) if( $Attr & $ATTR_IN );
